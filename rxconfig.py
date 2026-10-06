@@ -3,6 +3,7 @@ import reflex as rx
 config = rx.Config(
     app_name="bolsillo",
     show_built_with_reflex=False,
+    db_url="sqlite:///bolsillo.db",
     plugins=[
         rx.plugins.SitemapPlugin(),
         rx.plugins.TailwindV4Plugin(),

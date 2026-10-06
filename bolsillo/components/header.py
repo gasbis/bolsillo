@@ -116,4 +116,7 @@ def header() -> rx.Component:
             padding_x="1em",         
         ),                       
         rx.divider(size="4"),
+        position="sticky",
+        top="0",   
+        z_index="10",
     )
