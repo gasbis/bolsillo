@@ -18,28 +18,31 @@ colors = ["#6366F1", "#8B5CF6", "#A855F7", "#D946EF", "#EC4899"]
 
 # gráfico no válido. Solo modelo.
 def example_graph() -> rx.Component:
-    return rx.recharts.pie_chart(
-        rx.recharts.pie(
-            rx.foreach(
-                data,
-                lambda item, index: rx.recharts.cell(
-                    fill=rx.Var.create(colors)[index % len(colors)],
+    return rx.vstack(
+        rx.recharts.pie_chart(
+            rx.recharts.pie(
+                rx.foreach(
+                    data,
+                    lambda item, index: rx.recharts.cell(
+                        fill=rx.Var.create(colors)[index % len(colors)],
+                    ),
                 ),
+                data=data,
+                data_key="visitors",
+                name_key="browser",
+                inner_radius="60%",
+                outer_radius="90%",
+                padding_angle=2,
+                stroke="#fff",
+                custom_attrs={"strokeWidth": 2},
             ),
-            data=data,
-            data_key="visitors",
-            name_key="browser",
-            inner_radius="60%",
-            outer_radius="90%",
-            padding_angle=2,
-            stroke="#fff",
-            custom_attrs={"strokeWidth": 2},
+            rx.recharts.graphing_tooltip(),
+            width="40%",
+            height=300,
         ),
-        rx.recharts.graphing_tooltip(),
-        width="100%",
-        height=300,
-    )   
-    
+        justify="center",
+        align="center",  
+    )
     
 def index() -> rx.Component:
     return rx.container(
