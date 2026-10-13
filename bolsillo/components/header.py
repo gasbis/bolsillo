@@ -1,5 +1,8 @@
 import reflex as rx
 
+from bolsillo.components.user_dialogs import dialogos_usuario
+from bolsillo.states.auth_state import AuthState
+
 _NAV_ITEMS = [
     ("Inicio", "/", "house"),
     ("Categorias", "/categorias", "briefcase"),
@@ -106,8 +109,31 @@ def header() -> rx.Component:
                     ),
                     rx.menu.content(
                         *[_nav_menu_item(label, href, icon) for label, href, icon in _NAV_ITEMS],
+                        rx.cond(
+                            AuthState.es_admin,
+                            _nav_menu_item("Usuarios", "/usuarios", "users"),
+                        ),
+                        rx.menu.separator(),
+                        rx.text(
+                            AuthState.current_user["nombre"],
+                            size="1", color_scheme="gray", padding_x="0.75em", padding_y="0.25em",
+                        ),
+                        rx.menu.item(
+                            rx.hstack(rx.icon(tag="key-round", size=16), rx.text("Cambiar contraseña"), spacing="2", align="center"),
+                            on_select=AuthState.abrir_cambiar_password,
+                        ),
+                        rx.menu.item(
+                            rx.hstack(rx.icon(tag="user-pen", size=16), rx.text("Cambiar nombre"), spacing="2", align="center"),
+                            on_select=AuthState.abrir_cambiar_nombre,
+                        ),
+                        rx.menu.item(
+                            rx.hstack(rx.icon(tag="log-out", size=16), rx.text("Cerrar sesión"), spacing="2", align="center"),
+                            on_select=AuthState.logout,
+                            color="red",
+                        ),
                     ),
                 ),
+                dialogos_usuario(),
             ),
             align="center",
             justify="between",
