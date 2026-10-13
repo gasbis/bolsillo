@@ -19,7 +19,7 @@ class Categoria(rx.Model, table=True):
         ),
     )
     
-    tipo: str #Ingreso | Gasto | Cuenta
+    tipo: str #Ingresos | Gastos | Cuenta
     nombre: str
     icono: str
     id_usuario: int = sqlmodel.Field(foreign_key="usuarios.id")
@@ -27,7 +27,6 @@ class Categoria(rx.Model, table=True):
 class Transaccion(rx.Model, table=True):
     __tablename__ = "transacciones"
     
-    tipo: str #Ingreso | Gasto | Cuenta
     importe: float
     fecha: date
     notas: str

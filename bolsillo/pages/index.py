@@ -1,6 +1,6 @@
 import reflex as rx
 from bolsillo.components.header import header
-from bolsillo.pages.categories import ICONOS_GASTOS as iconos
+from bolsillo.pages.categories import ICONOS
 from bolsillo.components.header import FilterState
 from bolsillo.components.footer import footer
 
@@ -16,7 +16,7 @@ data = [
 
 colors = ["#6366F1", "#8B5CF6", "#A855F7", "#D946EF", "#EC4899"]
 
-# gráfico no válido. Solo modelo.
+# gráfico no válido. Solo modelo. Este gráfico deberá representar el total de gastos por categorías dentro de la fecha seleccionada.
 def example_graph() -> rx.Component:
     return rx.vstack(
         rx.recharts.pie_chart(
@@ -54,18 +54,18 @@ def index() -> rx.Component:
                 justify="center",
             ),
             rx.flex(
-                rx.icon(tag=iconos[0], size=30),
-                rx.icon(tag=iconos[1], size=30),
-                rx.icon(tag=iconos[2], size=30),
-                rx.icon(tag=iconos[3], size=30),
+                rx.icon(tag=ICONOS[0], size=30),
+                rx.icon(tag=ICONOS[1], size=30),
+                rx.icon(tag=ICONOS[2], size=30),
+                rx.icon(tag=ICONOS[3], size=30),
                 width="100%",
                 justify="between",
             ),
             rx.flex(
                 rx.flex(
-                    rx.icon(tag=iconos[4], size=30),
-                    rx.icon(tag=iconos[5], size=30),
-                    rx.icon(tag=iconos[6], size=30),
+                    rx.icon(tag=ICONOS[4], size=30),
+                    rx.icon(tag=ICONOS[5], size=30),
+                    rx.icon(tag=ICONOS[6], size=30),
                     direction="column",
                     justify="between",
                 ),
@@ -87,9 +87,9 @@ def index() -> rx.Component:
                     width="100%",
                 ),                             
                 rx.flex(
-                    rx.icon(tag=iconos[7], size=30),
-                    rx.icon(tag=iconos[8], size=30),
-                    rx.icon(tag=iconos[9], size=30),
+                    rx.icon(tag=ICONOS[7], size=30),
+                    rx.icon(tag=ICONOS[8], size=30),
+                    rx.icon(tag=ICONOS[9], size=30),
                     direction="column",
                     justify="between",
                 ),
@@ -98,10 +98,10 @@ def index() -> rx.Component:
                 justify="between",                            
             ),
             rx.flex(
-                rx.icon(tag=iconos[10], size=30),
-                rx.icon(tag=iconos[11], size=30),
-                rx.icon(tag=iconos[12], size=30),
-                rx.icon(tag=iconos[13], size=30),
+                rx.icon(tag=ICONOS[10], size=30),
+                rx.icon(tag=ICONOS[11], size=30),
+                rx.icon(tag=ICONOS[12], size=30),
+                rx.icon(tag=ICONOS[13], size=30),
                 width="100%",
                 justify="between",
             ),
@@ -115,7 +115,6 @@ def index() -> rx.Component:
                     "SALDO: 12.000€",
                     background_color="orange",
                     border_radius="5px",
-                    # width="30%",
                     margin="8px",
                     padding_x="15px",
                     padding_y="8px",
