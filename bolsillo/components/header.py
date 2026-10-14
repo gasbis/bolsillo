@@ -127,6 +127,10 @@ def header() -> rx.Component:
                             on_select=AuthState.abrir_cambiar_nombre,
                         ),
                         rx.menu.item(
+                            rx.hstack(rx.icon(tag="smartphone", size=16), rx.text("Cerrar sesión en otros dispositivos"), spacing="2", align="center"),
+                            on_select=AuthState.cerrar_otros_dispositivos,
+                        ),
+                        rx.menu.item(
                             rx.hstack(rx.icon(tag="log-out", size=16), rx.text("Cerrar sesión"), spacing="2", align="center"),
                             on_select=AuthState.logout,
                             color="red",

@@ -107,3 +107,25 @@ class Transaccion(rx.Model, table=True):
     notas: str = ""
     # Para ordenar los movimientos de un mismo día por orden de alta.
     creado_en: datetime = sqlmodel.Field(default_factory=_ahora)
+
+
+class SesionDispositivo(rx.Model, table=True):
+    """Un dispositivo (navegador) en el que el usuario dejó la sesión
+    recordada, para no pedirle la contraseña cada vez que abre la app.
+
+    El navegador guarda un token aleatorio en localStorage; aquí solo se
+    guarda su hash SHA-256, de modo que una copia de la base de datos no
+    permite suplantar a nadie. Ver sesiones_db.py.
+    """
+
+    __tablename__ = "sesiones_dispositivo"
+
+    id_usuario: int = sqlmodel.Field(foreign_key="usuarios.id", index=True)
+    token_hash: str = sqlmodel.Field(unique=True, index=True)
+    # Texto orientativo del navegador/sistema (User-Agent), para que el
+    # usuario reconozca sus dispositivos si algún día se listan.
+    dispositivo: str = ""
+    creado_en: datetime = sqlmodel.Field(default_factory=_ahora)
+    # La sesión caduca tras DIAS_CADUCIDAD sin usarse (ver sesiones_db.py);
+    # cada uso la renueva.
+    ultimo_uso: datetime = sqlmodel.Field(default_factory=_ahora)

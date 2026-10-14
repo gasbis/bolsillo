@@ -17,6 +17,12 @@ from bolsillo.auth_db import (
     obtener_usuario_por_email,
     verify_password,
 )
+from bolsillo.sesiones_db import (
+    cerrar_sesion,
+    cerrar_sesiones_usuario,
+    crear_sesion,
+    usuario_de_token,
+)
 
 
 class UsuarioActual(TypedDict):
@@ -39,6 +45,10 @@ ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "gasbis@hotmail.com").strip().lower(
 
 LONGITUD_MINIMA_PASSWORD = 8
 
+# Clave de localStorage donde el navegador guarda el token del
+# dispositivo (ver sesiones_db.py).
+CLAVE_TOKEN_DISPOSITIVO = "bolsillo_dispositivo"
+
 
 class AuthState(rx.State):
     is_authenticated: bool = False
@@ -46,6 +56,15 @@ class AuthState(rx.State):
     # obligatorio en vez del contenido (ver components/auth_guard.py).
     must_change_password: bool = False
     current_user: UsuarioActual = USUARIO_VACIO
+
+    # Token de "sesión recordada" de este dispositivo. Vive en el
+    # localStorage del navegador, así que sobrevive a cerrar la app o
+    # reiniciar el móvil.
+    token_dispositivo: str = rx.LocalStorage(name=CLAVE_TOKEN_DISPOSITIVO)
+    # False hasta que `restaurar_sesion` ha mirado si este dispositivo
+    # tiene una sesión recordada. Mientras tanto se muestra un spinner en
+    # vez de la pantalla de login, para que no "parpadee" al abrir la app.
+    sesion_comprobada: bool = False
 
     usuarios: list[UsuarioDirectorio] = []
 
@@ -86,6 +105,30 @@ class AuthState(rx.State):
 
     # --- Login / logout ---------------------------------------------------
 
+    def _entrar(self, usuario) -> None:
+        self.is_authenticated = True
+        self.must_change_password = usuario.debe_cambiar_password
+        self.current_user = UsuarioActual(id=usuario.id, email=usuario.email, nombre=usuario.nombre)
+
+    def _olvidar_dispositivo(self):
+        self.token_dispositivo = ""
+        return rx.remove_local_storage(CLAVE_TOKEN_DISPOSITIVO)
+
+    @rx.event
+    def restaurar_sesion(self):
+        """Primer evento del on_load de TODAS las páginas: si esta pestaña
+        aún no tiene sesión pero el dispositivo tiene un token recordado
+        y válido, entra sin pedir la contraseña."""
+        if self.is_authenticated or not self.token_dispositivo:
+            self.sesion_comprobada = True
+            return
+        usuario = usuario_de_token(self.token_dispositivo)
+        self.sesion_comprobada = True
+        if usuario is None:
+            # Token caducado, revocado o de un usuario desactivado.
+            return self._olvidar_dispositivo()
+        self._entrar(usuario)
+
     @rx.event
     def sign_in(self, form_data: dict):
         self.email_error = ""
@@ -111,9 +154,14 @@ class AuthState(rx.State):
             self.auth_error = "No hemos podido verificar tus credenciales."
             return
 
-        self.is_authenticated = True
-        self.must_change_password = usuario.debe_cambiar_password
-        self.current_user = UsuarioActual(id=usuario.id, email=usuario.email, nombre=usuario.nombre)
+        self._entrar(usuario)
+        self.sesion_comprobada = True
+
+        # Casilla "Recordar este dispositivo" (marcada por defecto). Un
+        # checkbox desmarcado no aparece en form_data.
+        if form_data.get("recordar"):
+            cerrar_sesion(self.token_dispositivo)  # por si había uno viejo
+            self.token_dispositivo = crear_sesion(usuario.id, self._dispositivo())
 
         # El login se hace "in situ" (la página no cambia de URL), así que
         # el on_load de la página no se ha disparado con el usuario ya
@@ -121,10 +169,33 @@ class AuthState(rx.State):
         # nueva y vuelve a disparar el on_load.
         return rx.redirect(self.router.url.path)
 
+    def _dispositivo(self) -> str:
+        try:
+            return self.router.headers.user_agent or ""
+        except AttributeError:
+            return ""
+
     @rx.event
     def logout(self):
-        self.reset()
-        return rx.redirect("/")
+        cerrar_sesion(self.token_dispositivo)
+        self.is_authenticated = False
+        self.must_change_password = False
+        self.current_user = USUARIO_VACIO
+        self.usuarios = []
+        return [self._olvidar_dispositivo(), rx.redirect("/")]
+
+    @rx.event
+    def cerrar_otros_dispositivos(self):
+        """Por si se pierde el móvil: cierra la sesión recordada en todos
+        los dispositivos menos en este."""
+        if not self.is_authenticated:
+            return
+        cerradas = cerrar_sesiones_usuario(self.current_user["id"], self.token_dispositivo)
+        return rx.toast.success(
+            "Sesión cerrada en los demás dispositivos."
+            if cerradas
+            else "No había sesiones abiertas en otros dispositivos."
+        )
 
     # --- Cambio de contraseña / nombre del propio usuario -----------------
 
@@ -167,6 +238,9 @@ class AuthState(rx.State):
             return
 
         establecer_password(self.current_user["email"], nueva)
+        # Quien tuviera la contraseña antigua deja de tener acceso desde
+        # otros dispositivos; este sigue dentro.
+        cerrar_sesiones_usuario(self.current_user["id"], self.token_dispositivo)
         self.must_change_password = False
         self.cambiar_password_dialog_open = False
 
@@ -257,6 +331,8 @@ class AuthState(rx.State):
         if usuario is None:
             return
         establecer_activo(email, not usuario.activo)
+        if usuario.activo:  # se acaba de desactivar
+            cerrar_sesiones_usuario(usuario.id)
         self._recargar_usuarios()
 
     @rx.event
@@ -287,5 +363,8 @@ class AuthState(rx.State):
         if not establecer_password_temporal(self.reset_password_email, password_temporal):
             self.reset_password_error = "No se ha podido restablecer la contraseña."
             return
+        usuario = obtener_usuario_por_email(self.reset_password_email)
+        if usuario is not None:
+            cerrar_sesiones_usuario(usuario.id)
 
         self.reset_password_open = False

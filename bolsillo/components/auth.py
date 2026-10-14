@@ -37,7 +37,7 @@ def tarjeta_centrada(*hijos: rx.Component) -> rx.Component:
             max_width="360px",
             padding="1.5em",
         ),
-        min_height="100vh",
+        min_height="100dvh",
         width="100%",
         padding="1em",
     )
@@ -56,6 +56,16 @@ def login_screen() -> rx.Component:
             rx.flex(
                 campo_login("Correo electrónico", "email", "email", AuthState.email_error),
                 campo_login("Contraseña", "password", "password", AuthState.password_error),
+                rx.text(
+                    rx.flex(
+                        rx.checkbox(name="recordar", default_checked=True),
+                        "Recordar este dispositivo",
+                        spacing="2",
+                        align="center",
+                    ),
+                    as_="label",
+                    size="2",
+                ),
                 rx.cond(
                     AuthState.auth_error != "",
                     rx.callout(AuthState.auth_error, color_scheme="red", size="1"),
