@@ -8,8 +8,8 @@ Convenciones:
   toca lo suyo. Toda consulta debe filtrar por él.
 - Los importes son `Decimal` con 2 decimales (columna NUMERIC(12, 2)),
   nunca `float`: con float las sumas acumulan errores de redondeo
-  (0.1 + 0.2 != 0.3). Siempre en euros y siempre POSITIVOS -- el signo
-  lo da `Transaccion.tipo`.
+  (0.1 + 0.2 != 0.3). Siempre en euros. El sentido del movimiento lo da
+  `Transaccion.tipo`, no el signo (ver reglas de signo en `Transaccion`).
 """
 
 from datetime import date, datetime, timezone
@@ -24,6 +24,11 @@ TIPO_GASTO = "gasto"
 TIPO_INGRESO = "ingreso"
 # Valor adicional válido solo para `Transaccion.tipo`.
 TIPO_TRANSFERENCIA = "transferencia"
+
+# Categoría de gasto que usa la función "ajustar saldo" de una cuenta:
+# el ajuste se anota como un gasto (negativo si el saldo sube). Se crea
+# automáticamente la primera vez que hace falta (ver transacciones_db.py).
+CATEGORIA_AJUSTE = "Ajuste"
 
 
 def _ahora() -> datetime:
@@ -91,6 +96,16 @@ class Transaccion(rx.Model, table=True):
     - transferencia: `id_cuenta` es el origen, `id_cuenta_destino` el
       destino e `id_categoria` None. No cuenta ni como gasto ni como
       ingreso en los totales; solo mueve saldo entre cuentas.
+
+    Signo de `importe`:
+    - gasto: normalmente positivo; NEGATIVO para devoluciones o reintegros,
+      que así restan del gasto de su categoría en vez de inflar los
+      ingresos (y las estadísticas de la categoría siguen siendo reales).
+    - ingreso y transferencia: siempre positivo.
+
+    Pagar una tarjeta de crédito es una transferencia del banco a la
+    cuenta de la tarjeta; invertir (comprar acciones) es una transferencia
+    a una cuenta "Inversiones". No hay tipos especiales para ello.
     """
 
     __tablename__ = "transacciones"

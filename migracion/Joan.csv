@@ -1,0 +1,16 @@
+Fecha;Cantidad;Cuenta;Saldo;Categoría;Descripción;Tipo de transacción;Agente;N.º de cheque;Clase;
+25/10/21, 20:21;0,00 €;Préstamo Joan;0,00 €;;;Saldo de apertura;;;;
+25/10/21, 20:21;5000,00 €;Ahorro ING;5000,00 €;;;Compra de activo;;;;
+7/12/21, 10:20;500,00 €;Ahorro ING;4500,00 €;;;Venta de activo;;;;
+3/1/22, 13:39;500,00 €;Ahorro ING;4000,00 €;;;Venta de activo;;;;
+4/2/22, 9:37;500,00 €;Ahorro ING;3500,00 €;;;Venta de activo;;;;
+1/3/22, 14:42;500,00 €;Ahorro ING;3000,00 €;;;Venta de activo;;;;
+1/4/22, 19:59;500,00 €;Ahorro ING;2500,00 €;;;Venta de activo;;;;
+3/5/22, 15:53;500,00 €;Ahorro ING;2000,00 €;;;Venta de activo;;;;
+1/6/22, 16:13;500,00 €;Ahorro ING;1500,00 €;;;Venta de activo;;;;
+3/7/22, 12:57;500,00 €;Ahorro ING;1000,00 €;;;Venta de activo;;;;
+3/8/22, 17:46;500,00 €;Ahorro ING;500,00 €;;;Venta de activo;;;;
+2/9/22, 11:01;500,00 €;Ahorro ING;0,00 €;;;Venta de activo;;;;
+19/4/24, 9:45;6000,00 €;Ahorro ING;6000,00 €;;;Compra de activo;;;;
+8/7/24, 7:47;2000,00 €;Ahorro ING;4000,00 €;;;Venta de activo;;;;
+4/12/24, 15:18;4000,00 €;Ahorro ING;0,00 €;;;Venta de activo;;;;

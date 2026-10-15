@@ -1,0 +1,8 @@
+Fecha;Cantidad;Cuenta;Saldo;Categoría;Descripción;Tipo de transacción;Agente;N.º de cheque;Clase;
+2/6/21, 12:08;0,00 €;Urbanitae;0,00 €;;;Saldo de apertura;;;;
+2/6/21, 12:08;1000,00 €;Ahorro ING;1000,00 €;;;Compra de activo;;;;
+7/6/22, 12:02;155,50 €;Ahorro ING;844,50 €;;Prima emisión;Venta de activo;;;;
+14/12/22, 12:10;77,50 €;Ahorro ING;767,00 €;;Prima emisión;Venta de activo;;;;
+23/5/24, 18:52;341,42 €;Ahorro ING;425,58 €;;;Venta de activo;;;;
+11/6/26, 9:11;500,00 €;Ahorro ING;-74,42 €;;;Venta de activo;;;;
+11/6/26, 9:13;74,42 €;Urbanitae;0,00 €;;;Ajuste de saldo;;;;
