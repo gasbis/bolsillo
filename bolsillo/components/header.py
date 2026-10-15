@@ -1,42 +1,77 @@
 import reflex as rx
 
+from bolsillo import periodos
 from bolsillo.components.user_dialogs import dialogos_usuario
 from bolsillo.states.auth_state import AuthState
+from bolsillo.states.resumen_state import ResumenState
 
 _NAV_ITEMS = [
     ("Inicio", "/", "house"),
     ("Categorias", "/categorias", "briefcase"),
 ]
 
-_CUENTAS_ITEMS = [
-    "Todas", "Banco1", "Banco2", "Cartera", "Tarjeta"
-]
-
-_FECHAS_ITEMS = [
-    "Día", "Semana", "Mes", "Año", "Todas", "Intervalo", "Elegir día"
-]
-class FilterState(rx.State):
-    date_item: str = "Todas"
-    cuenta_item: str = "Todas"
-
-    @rx.event
-    def set_date_item(self, item: str):
-        self.date_item = item
-
-    @rx.event
-    def set_cuenta_item(self, item: str):
-        self.cuenta_item = item
-
-
-def date_selector():
-    return rx.vstack(  
-        rx.radio(
-            _FECHAS_ITEMS,
-            value=FilterState.date_item,
-            on_change=FilterState.set_date_item,
-            direction="column"
-        ),
+def _campo_fecha(etiqueta: str, valor, al_cambiar) -> rx.Component:
+    return rx.flex(
+        rx.text(etiqueta, size="2", width="3.5em"),
+        rx.input(type="date", value=valor, on_change=al_cambiar, flex="1"),
+        align="center",
+        spacing="2",
+        width="100%",
     )
+
+
+def filtros() -> rx.Component:
+    """Contenido del popover del embudo: cuenta y periodo. Cada cambio
+    recalcula al momento los datos de la pantalla principal."""
+    return rx.flex(
+        rx.text("Cuenta", size="1", weight="bold", color_scheme="gray"),
+        rx.select(
+            ResumenState.nombres_cuentas,
+            value=ResumenState.cuenta,
+            on_change=ResumenState.set_cuenta,
+            width="100%",
+        ),
+        rx.divider(),
+        rx.text("Fecha", size="1", weight="bold", color_scheme="gray"),
+        rx.radio(
+            periodos.PERIODOS,
+            value=ResumenState.periodo,
+            on_change=ResumenState.set_periodo,
+            direction="column",
+        ),
+        rx.cond(
+            ResumenState.es_intervalo,
+            rx.flex(
+                _campo_fecha("Desde", ResumenState.desde, ResumenState.set_desde),
+                _campo_fecha("Hasta", ResumenState.hasta, ResumenState.set_hasta),
+                direction="column",
+                spacing="2",
+                width="100%",
+            ),
+        ),
+        rx.cond(
+            ResumenState.es_elegir_dia,
+            _campo_fecha("Día", ResumenState.referencia, ResumenState.set_referencia),
+        ),
+        rx.divider(),
+        rx.flex(
+            rx.button(
+                rx.icon(tag="rotate-ccw", size=14),
+                "Restablecer",
+                variant="soft",
+                color_scheme="gray",
+                size="1",
+                on_click=ResumenState.restablecer,
+            ),
+            rx.popover.close(rx.button("Cerrar", size="1")),
+            justify="between",
+            width="100%",
+        ),
+        direction="column",
+        spacing="2",
+        min_width="14em",
+    )
+
 
 def _nav_menu_item(label: str, href: str, icon_tag: str) -> rx.Component:
     """Igual que `_nav_link` pero como entrada de `rx.menu` -- para el
@@ -61,27 +96,17 @@ def header() -> rx.Component:
                         rx.icon_button(
                             rx.icon(tag="funnel", size=20),
                             size="1",
-                        ),  
-                    ),
-                    rx.popover.content(
-                        rx.flex(
-                            rx.select(
-                                _CUENTAS_ITEMS,
-                                on_change=FilterState.set_cuenta_item,
-                                value=FilterState.cuenta_item
-                            ),
-                            rx.divider(size="3"),
-                            date_selector(),
-                            direction="column",
+                            # Relleno si hay un filtro distinto del de partida.
+                            variant=rx.cond(ResumenState.filtro_activo, "solid", "soft"),
                         ),
                     ),
+                    rx.popover.content(filtros(), side="bottom", align="start"),
                 ),
-                
             ),
             rx.flex(
                 rx.vstack(
                     rx.text("Bolsillo", font_size="1em", font_weight="bold"),
-                    rx.text(FilterState.cuenta_item, size="1", color_scheme="red"),
+                    rx.text(ResumenState.cuenta, size="1", color_scheme="red"),
                     spacing="1",
                 ),
                 

@@ -13,7 +13,7 @@ import math
 
 import reflex as rx
 
-from bolsillo.pages.categories import ICONOS
+from bolsillo.states.resumen_state import ResumenState, euros
 
 # --- Geometría (unidades del viewBox 0-100) -------------------------------
 
@@ -79,64 +79,92 @@ def _linea(ang: float, hueco: tuple[float, float]) -> dict[str, str]:
     }
 
 
-class ResumenState(rx.State):
-    # Datos ficticios: gasto de cada uno de los 14 huecos en el periodo
-    # elegido. Cuando existan los movimientos se calculará desde la BD.
-    gastos: list[float] = [42.5, 0, 18.0, 25.3, 0, 9.9, 60.0, 12.0, 0, 30.0, 7.5, 0, 15.0, 22.0]
-    ingresos: float = 35.56
+# Color por defecto de `Categoria.color`: si el usuario no ha elegido
+# uno, se usa el de la paleta según el hueco para que el anillo no salga
+# todo gris.
+_COLOR_POR_DEFECTO = "#64748b"
+_ICONO_OTROS = "ellipsis"
+_COLOR_OTROS = "#94a3b8"
+
+
+def _huecos(categorias: list[dict]) -> list[dict]:
+    """Asigna las categorías de gasto (ya en su orden) a los 14 huecos.
+    Si hay más de 14, el último hueco agrupa el resto como "Otros"."""
+    n = len(HUECOS)
+    if len(categorias) > n:
+        resto = sum(float(c["importe"]) for c in categorias[n - 1:])
+        categorias = categorias[: n - 1] + [
+            {
+                "nombre": "Otros",
+                "icono": _ICONO_OTROS,
+                "color": _COLOR_OTROS,
+                "importe": resto,
+                "texto": euros(resto),
+            }
+        ]
+    res = []
+    for i, c in enumerate(categorias):
+        color = str(c["color"])
+        if not color or color.lower() == _COLOR_POR_DEFECTO:
+            color = COLORES[i]
+        res.append({**c, "color": color, "importe": float(c["importe"]), "hueco": i})
+    return res
+
+
+class DonutState(ResumenState):
+    """Geometría del anillo a partir de `ResumenState.categorias`."""
 
     @rx.var
-    def total_gastos(self) -> float:
-        return sum(self.gastos)
-
-    @rx.var
-    def texto_gastos(self) -> str:
-        return _euros(self.total_gastos)
-
-    @rx.var
-    def texto_ingresos(self) -> str:
-        return _euros(self.ingresos)
-
-    @rx.var
-    def activos(self) -> list[bool]:
-        return [g > 0 for g in self.gastos]
+    def iconos(self) -> list[dict[str, str]]:
+        """Un icono por categoría, en su hueco. Las que no tienen gasto en
+        el periodo se ven atenuadas."""
+        res = []
+        for c in _huecos(self.categorias):
+            x, y = HUECOS[c["hueco"]]
+            res.append(
+                {
+                    "icono": str(c["icono"]),
+                    "color": c["color"],
+                    "fondo": f"{c['color']}1A",
+                    "borde": f"2px solid {c['color']}",
+                    "left": f"{x}%",
+                    "top": f"{y}%",
+                    "opacidad": "1" if c["importe"] > 0 else "0.35",
+                    "titulo": f"{c['nombre']}: {c.get('texto', '')}",
+                }
+            )
+        return res
 
     @rx.var
     def porciones(self) -> list[dict[str, str]]:
         """Una entrada por categoría con gasto: path de la porción, línea
-        hasta su icono y color."""
-        total = self.total_gastos
+        hasta su icono y color. Las de gasto neto negativo (más
+        devoluciones que gastos) no se dibujan."""
+        con_gasto = [c for c in _huecos(self.categorias) if c["importe"] > 0]
+        total = sum(c["importe"] for c in con_gasto)
         if total <= 0:
             return []
         res: list[dict[str, str]] = []
         ang = _ANG_INICIO
-        for i, gasto in enumerate(self.gastos):
-            if gasto <= 0:
-                continue
-            paso = 360 * gasto / total
+        for c in con_gasto:
+            paso = 360 * c["importe"] / total
             res.append(
                 {
                     "d": _sector(ang, ang + paso),
-                    "color": COLORES[i],
-                    **_linea(ang + paso / 2, HUECOS[i]),
+                    "color": c["color"],
+                    **_linea(ang + paso / 2, HUECOS[c["hueco"]]),
                 }
             )
             ang += paso
         return res
 
 
-def _euros(valor: float) -> str:
-    return f"{valor:,.2f} €".replace(",", "X").replace(".", ",").replace("X", ".")
-
-
-def _icono(i: int) -> rx.Component:
-    x, y = HUECOS[i]
-    color = COLORES[i]
+def _icono(item: rx.Var) -> rx.Component:
     return rx.box(
-        rx.icon(tag=ICONOS[i], color=color, style={"width": "58%", "height": "58%"}),
+        rx.icon(tag=item["icono"].to(str), color=item["color"], style={"width": "58%", "height": "58%"}),
         position="absolute",
-        left=f"{x}%",
-        top=f"{y}%",
+        left=item["left"],
+        top=item["top"],
         width=f"{ICONO}%",
         height=f"{ICONO}%",
         transform="translate(-50%, -50%)",
@@ -144,10 +172,11 @@ def _icono(i: int) -> rx.Component:
         align_items="center",
         justify_content="center",
         border_radius="50%",
-        border=f"2px solid {color}",
-        background_color=f"{color}1A",
-        opacity=rx.cond(ResumenState.activos[i], "1", "0.35"),
+        border=item["borde"],
+        background_color=item["fondo"],
+        opacity=item["opacidad"],
         cursor="pointer",
+        title=item["titulo"],
     )
 
 
@@ -157,14 +186,14 @@ def grafico_categorias() -> rx.Component:
     return rx.box(
         rx.el.svg(
             rx.foreach(
-                ResumenState.porciones,
+                DonutState.porciones,
                 lambda p: rx.el.svg.line(
                     x1=p["x1"], y1=p["y1"], x2=p["x2"], y2=p["y2"],
                     stroke=p["color"], stroke_width="0.5", stroke_linecap="round",
                 ),
             ),
             rx.foreach(
-                ResumenState.porciones,
+                DonutState.porciones,
                 lambda p: rx.el.svg.path(
                     d=p["d"], fill=p["color"],
                     stroke="var(--color-background)", stroke_width="0.6",
@@ -176,10 +205,10 @@ def grafico_categorias() -> rx.Component:
             position="absolute",
             inset="0",
         ),
-        *[_icono(i) for i in range(len(HUECOS))],
+        rx.foreach(DonutState.iconos, _icono),
         rx.vstack(
-            rx.text(ResumenState.texto_ingresos, size="3", weight="bold", color_scheme="green"),
-            rx.text(ResumenState.texto_gastos, size="3", weight="bold", color_scheme="red"),
+            rx.text(DonutState.texto_ingresos, size="3", weight="bold", color_scheme="green"),
+            rx.text(DonutState.texto_gastos, size="3", weight="bold", color_scheme="red"),
             align="center",
             spacing="1",
             position="absolute",
