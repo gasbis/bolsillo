@@ -38,7 +38,7 @@ class ResumenState(rx.State):
     cuentas: list[dict[str, str]] = []  # [{"id": "3", "nombre": "Banco"}]
 
     # --- Datos del periodo ------------------------------------------------
-    # Categorías de gasto en su orden: nombre, icono, color e importe
+    # Categorías de gasto en su orden: id, nombre, icono, color e importe
     # (float solo para el dibujo; los textos se formatean desde Decimal).
     categorias: list[dict[str, str | float]] = []
     texto_gastos: str = euros(CERO)
@@ -105,6 +105,7 @@ class ResumenState(rx.State):
 
         self.categorias = [
             {
+                "id": str(g.id),
                 "nombre": g.nombre,
                 "icono": g.icono,
                 "color": g.color,

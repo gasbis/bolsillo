@@ -7,12 +7,21 @@ colocan encima con `position: absolute` usando esos mismos porcentajes y
 líneas, anillo e iconos encajan siempre, sea cual sea el tamaño de la
 pantalla. (Con recharts no se puede saber desde fuera dónde cae cada
 porción, por eso no se dibujaban las líneas.)
+
+Interacción con los iconos (pensada para el dedo, también va con ratón):
+- Debajo de cada icono se ve siempre su % sobre el gasto del periodo.
+- Mantener pulsado: el centro del anillo muestra el nombre y el total de
+  esa categoría y su porción se resalta; al soltar vuelve a lo normal.
+  Es puro navegador (`_JS_PULSACION`), sin ir al servidor, para que
+  responda al instante.
+- Pulsación corta: abre el alta de gasto con esa categoría elegida.
 """
 
 import math
 
 import reflex as rx
 
+from bolsillo.states.alta_gasto_state import AltaGastoState
 from bolsillo.states.resumen_state import ResumenState, euros
 
 # --- Geometría (unidades del viewBox 0-100) -------------------------------
@@ -26,12 +35,16 @@ _RECORTE = ICONO / 2 + 0.8  # la línea termina en el borde del icono
 
 # 14 huecos en el sentido de las agujas del reloj empezando arriba a la
 # izquierda: 4 arriba, 3 a la derecha, 4 abajo y 3 a la izquierda.
+# Cada hueco es el centro del icono; el % va debajo, por eso la fila de
+# abajo está más arriba (89) que simétrica a la de arriba (7): así el %
+# de los iconos de abajo cabe dentro del cuadrado.
 _FILA = [11.0, 37.0, 63.0, 89.0]
-_COL = [31.0, 50.0, 69.0]
+_COL = [30.0, 49.0, 68.0]
+_ARRIBA, _ABAJO = 7.0, 89.0
 HUECOS: list[tuple[float, float]] = (
-    [(x, 7.0) for x in _FILA]
+    [(x, _ARRIBA) for x in _FILA]
     + [(93.0, y) for y in _COL]
-    + [(x, 93.0) for x in reversed(_FILA)]
+    + [(x, _ABAJO) for x in reversed(_FILA)]
     + [(7.0, y) for y in reversed(_COL)]
 )
 
@@ -95,6 +108,7 @@ def _huecos(categorias: list[dict]) -> list[dict]:
         resto = sum(float(c["importe"]) for c in categorias[n - 1:])
         categorias = categorias[: n - 1] + [
             {
+                "id": "",  # no es una categoría: el alta se abre sin elegir
                 "nombre": "Otros",
                 "icono": _ICONO_OTROS,
                 "color": _COLOR_OTROS,
@@ -111,18 +125,38 @@ def _huecos(categorias: list[dict]) -> list[dict]:
     return res
 
 
+def _porcentaje(importe: float, total: float) -> str:
+    """'23 %', '<1 %' o '0 %' (sin gasto o gasto neto negativo)."""
+    if importe <= 0 or total <= 0:
+        return "0\u00a0%"
+    p = 100 * importe / total
+    if p < 1:
+        return "<1\u00a0%"
+    return f"{round(p)}\u00a0%"
+
+
 class DonutState(ResumenState):
     """Geometría del anillo a partir de `ResumenState.categorias`."""
 
     @rx.var
     def iconos(self) -> list[dict[str, str]]:
-        """Un icono por categoría, en su hueco. Las que no tienen gasto en
-        el periodo se ven atenuadas."""
+        """Un icono por categoría, en su hueco, con su % del gasto y los
+        textos que se ven en el centro al mantenerlo pulsado. Las que no
+        tienen gasto en el periodo se ven atenuadas."""
+        huecos = _huecos(self.categorias)
+        # Mismo total que el anillo (solo gasto neto positivo), para que
+        # los % cuadren con el tamaño de las porciones y sumen 100.
+        total = sum(c["importe"] for c in huecos if c["importe"] > 0)
         res = []
-        for c in _huecos(self.categorias):
+        for c in huecos:
             x, y = HUECOS[c["hueco"]]
             res.append(
                 {
+                    "i": str(c["hueco"]),
+                    "id": str(c.get("id", "")),
+                    "nombre": str(c["nombre"]),
+                    "texto": str(c.get("texto", "")),
+                    "porcentaje": _porcentaje(c["importe"], total),
                     "icono": str(c["icono"]),
                     "color": c["color"],
                     "fondo": f"{c['color']}1A",
@@ -130,7 +164,6 @@ class DonutState(ResumenState):
                     "left": f"{x}%",
                     "top": f"{y}%",
                     "opacidad": "1" if c["importe"] > 0 else "0.35",
-                    "titulo": f"{c['nombre']}: {c.get('texto', '')}",
                 }
             )
         return res
@@ -150,6 +183,7 @@ class DonutState(ResumenState):
             paso = 360 * c["importe"] / total
             res.append(
                 {
+                    "i": str(c["hueco"]),
                     "d": _sector(ang, ang + paso),
                     "color": c["color"],
                     **_linea(ang + paso / 2, HUECOS[c["hueco"]]),
@@ -159,9 +193,128 @@ class DonutState(ResumenState):
         return res
 
 
+# --- Pulsación larga ---------------------------------------------------
+#
+# Reflex no tiene eventos de "mantener pulsado" y hacerlo con eventos al
+# servidor iría con retraso, así que se resuelve en el navegador: al
+# cumplirse ESPERA ms con el dedo quieto sobre un icono se pone
+# `data-sel="<hueco>"` en el cuadrado del gráfico y el CSS de `_CSS` hace
+# el resto (muestra el centro de esa categoría y atenúa las demás
+# porciones). Al soltar se quita. Si hubo pulsación larga (o el dedo se
+# movió) se anula el click, para que no se abra además el formulario.
+# React no toca `data-sel` porque no es una prop suya.
+
+_ESPERA_MS = 450
+
+_JS_PULSACION = """
+(function () {
+  if (window.__bolsilloPulsacion) return;
+  window.__bolsilloPulsacion = true;
+  var ESPERA = %d, MARGEN = 10;
+  var temporizador = null, icono = null, bloquear = false, x0 = 0, y0 = 0;
+
+  function cuadrado(el) { return el && el.closest('.donut-categorias'); }
+  function terminar() {
+    clearTimeout(temporizador);
+    temporizador = null;
+    var d = cuadrado(icono);
+    if (d) d.removeAttribute('data-sel');
+    icono = null;
+  }
+
+  document.addEventListener('pointerdown', function (e) {
+    var ic = e.target.closest && e.target.closest('.icono-categoria');
+    terminar();
+    bloquear = false;
+    if (!ic || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    icono = ic; x0 = e.clientX; y0 = e.clientY;
+    temporizador = setTimeout(function () {
+      temporizador = null;
+      bloquear = true;
+      var d = cuadrado(ic);
+      if (d) d.setAttribute('data-sel', ic.getAttribute('data-i'));
+      if (navigator.vibrate) { try { navigator.vibrate(15); } catch (_) {} }
+    }, ESPERA);
+  });
+
+  document.addEventListener('pointermove', function (e) {
+    // Si el dedo se desplaza antes de tiempo no es ni corta ni larga.
+    if (temporizador && Math.hypot(e.clientX - x0, e.clientY - y0) > MARGEN) {
+      bloquear = true;
+      terminar();
+    }
+  });
+
+  document.addEventListener('pointerup', terminar);
+  document.addEventListener('pointercancel', function () { bloquear = true; terminar(); });
+
+  // En fase de captura: llega antes que el on_click de React y lo anula.
+  document.addEventListener('click', function (e) {
+    if (bloquear && e.target.closest && e.target.closest('.icono-categoria')) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+    bloquear = false;
+  }, true);
+
+  // Sin menú contextual (Android / ratón derecho) sobre los iconos.
+  document.addEventListener('contextmenu', function (e) {
+    if (e.target.closest && e.target.closest('.icono-categoria')) e.preventDefault();
+  });
+})();
+""" % _ESPERA_MS
+
+
+def _css() -> str:
+    reglas = [
+        # Que una pulsación larga no seleccione texto ni saque el menú de
+        # iOS, y que el toque no espere al doble toque.
+        ".icono-categoria { -webkit-touch-callout: none; -webkit-user-select: none;"
+        " user-select: none; touch-action: manipulation;"
+        " -webkit-tap-highlight-color: transparent; }",
+        ".centro-cat { visibility: hidden; }",
+        ".porcion { transition: opacity 120ms; }",
+        ".donut-categorias[data-sel] .centro-totales { visibility: hidden; }",
+        ".donut-categorias[data-sel] .porcion { opacity: 0.25; }",
+    ]
+    for i in range(len(HUECOS)):
+        sel = f'.donut-categorias[data-sel="{i}"]'
+        reglas += [
+            f'{sel} .centro-cat[data-i="{i}"] {{ visibility: visible; }}',
+            f'{sel} .porcion[data-i="{i}"] {{ opacity: 1; }}',
+            f'{sel} .icono-categoria[data-i="{i}"] {{ box-shadow: 0 0 0 0.3em var(--gray-a5); }}',
+        ]
+    return "\n".join(reglas)
+
+
+# --- Componentes ----------------------------------------------------------
+
+
 def _icono(item: rx.Var) -> rx.Component:
     return rx.box(
         rx.icon(tag=item["icono"].to(str), color=item["color"], style={"width": "58%", "height": "58%"}),
+        # % justo debajo del círculo. El fondo tapa la línea que llega a
+        # los iconos de la fila de arriba (que entra por debajo).
+        rx.text(
+            item["porcentaje"],
+            position="absolute",
+            top="calc(100% + 0.15em)",
+            left="50%",
+            transform="translateX(-50%)",
+            font_size="3cqw",
+            line_height="1.1",
+            font_weight="600",
+            white_space="nowrap",
+            color="var(--gray-12)",
+            background_color="var(--color-background)",
+            padding_x="0.25em",
+            border_radius="0.3em",
+            pointer_events="none",
+        ),
+        class_name="icono-categoria",
+        custom_attrs={"data-i": item["i"], "aria-label": item["nombre"]},
+        role="button",
+        on_click=AltaGastoState.abrir(item["id"]),
         position="absolute",
         left=item["left"],
         top=item["top"],
@@ -176,7 +329,44 @@ def _icono(item: rx.Var) -> rx.Component:
         background_color=item["fondo"],
         opacity=item["opacidad"],
         cursor="pointer",
-        title=item["titulo"],
+    )
+
+
+_CENTRO = dict(
+    align="center",
+    spacing="1",
+    position="absolute",
+    top="50%",
+    left="50%",
+    transform="translate(-50%, -50%)",
+    # Que quepa en el hueco del anillo (diámetro 2*R_INT = 42%).
+    max_width=f"{2 * R_INT - 6}%",
+    text_align="center",
+    pointer_events="none",
+)
+
+
+def _centro_categoria(item: rx.Var) -> rx.Component:
+    """Lo que se ve en el centro mientras se mantiene pulsado un icono.
+    Hay uno por icono, ocultos; el CSS enseña el del icono pulsado."""
+    return rx.vstack(
+        rx.text(
+            item["nombre"],
+            size="3",
+            weight="bold",
+            color=item["color"],
+            style={
+                "display": "-webkit-box",
+                "-webkit-line-clamp": "2",
+                "-webkit-box-orient": "vertical",
+                "overflow": "hidden",
+                "word-break": "break-word",
+            },
+        ),
+        rx.text(item["texto"], size="3", weight="bold"),
+        class_name="centro-cat",
+        custom_attrs={"data-i": item["i"]},
+        **_CENTRO,
     )
 
 
@@ -184,12 +374,16 @@ def grafico_categorias() -> rx.Component:
     """Cuadrado que ocupa todo el sitio disponible (el menor de ancho y alto
     del contenedor, que debe tener `container_type="size"`)."""
     return rx.box(
+        rx.el.style(_css()),
+        rx.script(_JS_PULSACION),
         rx.el.svg(
             rx.foreach(
                 DonutState.porciones,
                 lambda p: rx.el.svg.line(
                     x1=p["x1"], y1=p["y1"], x2=p["x2"], y2=p["y2"],
                     stroke=p["color"], stroke_width="0.5", stroke_linecap="round",
+                    class_name="porcion",
+                    custom_attrs={"data-i": p["i"]},
                 ),
             ),
             rx.foreach(
@@ -197,6 +391,8 @@ def grafico_categorias() -> rx.Component:
                 lambda p: rx.el.svg.path(
                     d=p["d"], fill=p["color"],
                     stroke="var(--color-background)", stroke_width="0.6",
+                    class_name="porcion",
+                    custom_attrs={"data-i": p["i"]},
                 ),
             ),
             view_box="0 0 100 100",
@@ -209,15 +405,16 @@ def grafico_categorias() -> rx.Component:
         rx.vstack(
             rx.text(DonutState.texto_ingresos, size="3", weight="bold", color_scheme="green"),
             rx.text(DonutState.texto_gastos, size="3", weight="bold", color_scheme="red"),
-            align="center",
-            spacing="1",
-            position="absolute",
-            top="50%",
-            left="50%",
-            transform="translate(-50%, -50%)",
+            class_name="centro-totales",
+            **_CENTRO,
         ),
+        rx.foreach(DonutState.iconos, _centro_categoria),
+        class_name="donut-categorias",
         position="relative",
         width="min(100cqw, 100cqh)",
         height="min(100cqw, 100cqh)",
         flex_shrink="0",
+        # Contenedor propio: el % de los iconos se mide en cqw del cuadrado
+        # y así escala con el gráfico.
+        container_type="size",
     )

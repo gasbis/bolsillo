@@ -1,5 +1,6 @@
 import reflex as rx
 
+from bolsillo.components.alta_gasto import dialogo_alta_gasto
 from bolsillo.components.donut import grafico_categorias
 from bolsillo.components.footer import footer
 from bolsillo.components.header import header
@@ -94,6 +95,7 @@ def index() -> rx.Component:
         ),
         _fila_saldo(),
         rx.box(footer(), width="100%", padding_bottom="0.5em", flex_shrink="0"),
+        dialogo_alta_gasto(),
         direction="column",
         height="100dvh",
         width="100%",

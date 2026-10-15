@@ -115,3 +115,60 @@ def ajustar_saldo(id_usuario: int, id_cuenta: int, saldo_nuevo: Decimal, fecha) 
         )
         session.commit()
         return diferencia
+
+
+def categorias_gasto(id_usuario: int) -> list[dict[str, str]]:
+    """Categorías de gasto activas del usuario, en su orden, para el
+    selector del formulario de alta."""
+    with rx.session() as session:
+        categorias = session.exec(
+            sqlmodel.select(Categoria)
+            .where(
+                Categoria.id_usuario == id_usuario,
+                Categoria.tipo == TIPO_GASTO,
+                Categoria.activa == True,  # noqa: E712
+            )
+            .order_by(Categoria.orden, Categoria.id)
+        ).all()
+        return [{"id": str(c.id), "nombre": c.nombre} for c in categorias]
+
+
+def crear_gasto(
+    id_usuario: int,
+    id_categoria: int,
+    id_cuenta: int,
+    fecha,
+    importe: Decimal,
+    notas: str = "",
+) -> Decimal:
+    """Anota un gasto (negativo = devolución). Comprueba que la categoría
+    y la cuenta son del usuario y están activas; si no, ValueError.
+    Devuelve el importe anotado, ya redondeado a 2 decimales."""
+    importe = Decimal(importe).quantize(CERO)
+    if importe == 0:
+        raise ValueError("El importe no puede ser 0")
+    with rx.session() as session:
+        categoria = session.get(Categoria, id_categoria)
+        if (
+            categoria is None
+            or categoria.id_usuario != id_usuario
+            or categoria.tipo != TIPO_GASTO
+            or not categoria.activa
+        ):
+            raise ValueError("La categoría no es válida")
+        cuenta = session.get(Cuenta, id_cuenta)
+        if cuenta is None or cuenta.id_usuario != id_usuario or not cuenta.activa:
+            raise ValueError("La cuenta no es válida")
+        session.add(
+            Transaccion(
+                id_usuario=id_usuario,
+                tipo=TIPO_GASTO,
+                fecha=fecha,
+                importe=importe,
+                id_cuenta=id_cuenta,
+                id_categoria=id_categoria,
+                notas=notas.strip(),
+            )
+        )
+        session.commit()
+    return importe
