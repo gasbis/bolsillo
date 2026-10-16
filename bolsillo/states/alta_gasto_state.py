@@ -1,84 +1,167 @@
-"""Formulario de alta rápida de un gasto, que se abre con una pulsación
-corta sobre el icono de una categoría en la pantalla principal.
+"""Formulario de alta de un gasto.
 
-Es un substate de ResumenState para poder usar sus cuentas y su filtro, y
-recargar el donut (`_recargar`) en cuanto se guarda el gasto.
+Se abre de dos formas:
+- Pulsación corta sobre el icono de una categoría en la pantalla
+  principal: la categoría ya viene elegida y el botón final la muestra
+  e invita a aceptar.
+- Botón de gasto (flecha roja) del pie: sin categoría; el botón final
+  ("Elegir categoría") abre el selector de categorías, desde el que
+  también se puede crear una nueva.
+
+El diálogo tiene tres vistas (VISTA_*): el formulario, el selector de
+categorías y la creación de una categoría nueva.
+
+Es un substate de ResumenState para poder usar sus cuentas y recargar el
+donut (`_recargar`) en cuanto se guarda el gasto.
 """
 
 from datetime import date
-from decimal import Decimal, InvalidOperation
 
 import reflex as rx
 
-from bolsillo import periodos
+from bolsillo import calculadora, periodos
+from bolsillo.iconos import ICONOS
 from bolsillo.states.auth_state import AuthState
 from bolsillo.states.resumen_state import ResumenState, euros
-from bolsillo.transacciones_db import categorias_gasto, crear_gasto
+from bolsillo.transacciones_db import (
+    categorias_gasto,
+    crear_categoria_gasto,
+    crear_gasto,
+    cuentas_por_defecto,
+)
 
-# Límite de NUMERIC(12, 2).
-_MAXIMO = Decimal("9999999999.99")
-
-
-def leer_importe(texto: str) -> Decimal | None:
-    """Acepta '12,5', '12.50', '1.234,56' o '-3,20' (devolución).
-    Devuelve None si no es un número válido."""
-    texto = (texto or "").strip().replace(" ", "").replace("€", "")
-    if "," in texto:
-        # Formato español: el punto es separador de miles.
-        texto = texto.replace(".", "").replace(",", ".")
-    try:
-        valor = Decimal(texto)
-    except InvalidOperation:
-        return None
-    if not valor.is_finite():
-        return None
-    return valor
+VISTA_FORMULARIO = "formulario"
+VISTA_CATEGORIAS = "categorias"
+VISTA_NUEVA = "nueva"
 
 
 class AltaGastoState(ResumenState):
     abierto: bool = False
-    # Opciones de los selectores: [{"id": "3", "nombre": "Comida"}].
-    opciones_categorias: list[dict[str, str]] = []
-    # Valores elegidos (ids como texto, que es lo que maneja rx.select).
-    id_categoria: str = ""
-    # Se recuerda la última cuenta usada mientras dure la sesión.
+    vista: str = VISTA_FORMULARIO
+
+    # --- Formulario ---------------------------------------------------------
+    fecha_alta: str = ""  # ISO 'AAAA-MM-DD' (formato de <input type="date">)
+    # Ids como texto, que es lo que maneja rx.select.
     id_cuenta_alta: str = ""
-    fecha_alta: str = ""
+    # Lo que se ve en el campo del importe, p.ej. "12,50+3" (ver calculadora.py).
+    expresion: str = ""
+    notas: str = ""
     error: str = ""
+
+    # --- Categorías -------------------------------------------------------
+    # [{"id": "3", "nombre": "Comida", "icono": "utensils", "color": "#F97316"}]
+    opciones_categorias: list[dict[str, str]] = []
+    id_categoria: str = ""
+
+    # --- Categoría nueva --------------------------------------------------
+    nuevo_nombre: str = ""
+    nuevo_icono: str = ""
+    error_nueva: str = ""
+
+    # --- Solo en el servidor (no viajan al navegador) ---------------------
+    # Cuenta más usada últimamente y {id_categoria: id_cuenta} de las
+    # categorías que siempre se pagan con la misma (transacciones_db.py).
+    _cuenta_habitual: str = ""
+    _cuentas_fijas: dict[str, str] = {}
+    # Si el usuario cambia la cuenta a mano, elegir después una categoría
+    # ya no se la cambia.
+    _cuenta_elegida_a_mano: bool = False
+
+    # --- Vars derivadas para la interfaz ----------------------------------
 
     @rx.var
     def sin_cuentas(self) -> bool:
         return len(self.cuentas) == 0
 
-    def _fecha_por_defecto(self) -> str:
-        """Hoy, salvo que se esté viendo un día concreto: entonces ese día
-        (útil para anotar algo que se olvidó)."""
-        if self.periodo in (periodos.PERIODO_DIA, periodos.PERIODO_ELEGIR_DIA):
-            return self._fecha_referencia().isoformat()
-        return date.today().isoformat()
+    @rx.var
+    def importe_valido(self) -> bool:
+        """Activa el botón de categoría / aceptar."""
+        valor = calculadora.evaluar(self.expresion)
+        return valor is not None and valor != 0 and abs(valor) <= calculadora.MAXIMO
+
+    @rx.var
+    def texto_resultado(self) -> str:
+        """Debajo del importe: el valor que se va a guardar si hay
+        operaciones a medias ('= 18,50 €') y si es una devolución."""
+        valor = calculadora.evaluar(self.expresion)
+        if valor is None:
+            return ""
+        texto = f"= {euros(valor)}" if calculadora.tiene_operacion(self.expresion) else ""
+        if valor < 0:
+            texto = f"{texto}  (devolución)".strip()
+        return texto
+
+    @rx.var
+    def texto_importe(self) -> str:
+        """Importe que se guardará, para la cabecera del selector."""
+        valor = calculadora.evaluar(self.expresion)
+        return euros(valor) if valor is not None else ""
+
+    @rx.var
+    def categoria_elegida(self) -> dict[str, str]:
+        for c in self.opciones_categorias:
+            if c["id"] == self.id_categoria:
+                return c
+        return {}
+
+    @rx.var
+    def hay_categoria(self) -> bool:
+        return any(c["id"] == self.id_categoria for c in self.opciones_categorias)
+
+    @rx.var
+    def titulo(self) -> str:
+        if self.vista == VISTA_CATEGORIAS:
+            return "Elegir categoría"
+        if self.vista == VISTA_NUEVA:
+            return "Nueva categoría"
+        return "Nuevo gasto"
+
+    # --- Internos -----------------------------------------------------------
+
+    async def _id_usuario(self) -> int | None:
+        return (await self.get_state(AuthState)).current_user["id"] or None
+
+    def _cuenta_propuesta(self, id_categoria: str) -> str:
+        """La cuenta fija de la categoría si la tiene; si no, la habitual;
+        y si tampoco, la primera de la lista."""
+        ids = [c["id"] for c in self.cuentas]
+        for candidata in (self._cuentas_fijas.get(id_categoria, ""), self._cuenta_habitual):
+            if candidata in ids:
+                return candidata
+        return ids[0] if ids else ""
+
+    def _elegir_categoria(self, id_categoria: str):
+        self.id_categoria = id_categoria
+        if not self._cuenta_elegida_a_mano:
+            self.id_cuenta_alta = self._cuenta_propuesta(id_categoria)
+        self.error = ""
+        self.vista = VISTA_FORMULARIO
+
+    # --- Abrir / cerrar ---------------------------------------------------
 
     @rx.event
     async def abrir(self, id_categoria: str):
-        """Pulsación corta sobre un icono. `id_categoria` vacío (el hueco
-        "Otros") abre el formulario sin categoría elegida."""
-        id_usuario = (await self.get_state(AuthState)).current_user["id"]
+        """Pulsación corta sobre un icono, o botón de gasto del pie con
+        `id_categoria` vacío (también el hueco "Otros" del donut)."""
+        id_usuario = await self._id_usuario()
         if not id_usuario:
             return
+        if not self.cuentas:
+            await self._recargar()
         self.opciones_categorias = categorias_gasto(id_usuario)
-        ids_categorias = {c["id"] for c in self.opciones_categorias}
+        habitual, fijas = cuentas_por_defecto(id_usuario)
+        self._cuenta_habitual = str(habitual) if habitual else ""
+        self._cuentas_fijas = {str(k): str(v) for k, v in fijas.items()}
+        self._cuenta_elegida_a_mano = False
+
         # Una categoría archivada (sale en el donut por tener movimientos
         # en el periodo) no admite gastos nuevos: se deja sin elegir.
-        self.id_categoria = id_categoria if id_categoria in ids_categorias else ""
+        ids_categorias = {c["id"] for c in self.opciones_categorias}
+        self._elegir_categoria(id_categoria if id_categoria in ids_categorias else "")
 
-        ids_cuentas = [c["id"] for c in self.cuentas]
-        filtro = self._id_cuenta()
-        if filtro is not None:
-            # Si se está viendo una cuenta concreta, el gasto va a ella.
-            self.id_cuenta_alta = str(filtro)
-        elif self.id_cuenta_alta not in ids_cuentas:
-            self.id_cuenta_alta = ids_cuentas[0] if ids_cuentas else ""
-
-        self.fecha_alta = self._fecha_por_defecto()
+        self.fecha_alta = date.today().isoformat()
+        self.expresion = ""
+        self.notas = ""
         self.error = ""
         self.abierto = True
 
@@ -86,26 +169,97 @@ class AltaGastoState(ResumenState):
     def set_abierto(self, valor: bool):
         self.abierto = valor
 
+    # --- Campos del formulario --------------------------------------------
+
     @rx.event
-    def set_id_categoria(self, valor: str):
-        self.id_categoria = valor
+    def set_fecha_alta(self, valor: str):
+        if periodos.a_fecha(valor):
+            self.fecha_alta = valor
 
     @rx.event
     def set_id_cuenta_alta(self, valor: str):
         self.id_cuenta_alta = valor
+        self._cuenta_elegida_a_mano = True
 
     @rx.event
-    async def guardar(self, datos: dict):
-        importe = leer_importe(datos.get("importe", ""))
-        fecha = periodos.a_fecha(datos.get("fecha", ""))
+    def set_expresion(self, valor: str):
+        """Escribir en el campo con un teclado físico (ordenador)."""
+        self.expresion = calculadora.limpiar(valor)
+        self.error = ""
+
+    @rx.event
+    def tecla(self, tecla: str):
+        """Teclado numérico del formulario."""
+        self.expresion = calculadora.pulsar(self.expresion, tecla)
+        self.error = ""
+
+    @rx.event
+    def set_notas(self, valor: str):
+        self.notas = valor[:200]
+
+    # --- Selector y creación de categorías --------------------------------
+
+    @rx.event
+    def ver_categorias(self):
+        self.vista = VISTA_CATEGORIAS
+
+    @rx.event
+    def ver_formulario(self):
+        self.vista = VISTA_FORMULARIO
+
+    @rx.event
+    def elegir_categoria(self, id_categoria: str):
+        """Vuelve al formulario con la categoría elegida: el botón final
+        pasa a mostrarla e invita a aceptar."""
+        self._elegir_categoria(id_categoria)
+
+    @rx.event
+    def ver_nueva(self):
+        self.nuevo_nombre = ""
+        self.nuevo_icono = ""
+        self.error_nueva = ""
+        self.vista = VISTA_NUEVA
+
+    @rx.event
+    def set_nuevo_nombre(self, valor: str):
+        self.nuevo_nombre = valor
+        self.error_nueva = ""
+
+    @rx.event
+    def set_nuevo_icono(self, icono: str):
+        if icono in ICONOS:
+            self.nuevo_icono = icono
+            self.error_nueva = ""
+
+    @rx.event
+    async def crear_categoria(self):
+        id_usuario = await self._id_usuario()
+        if not id_usuario:
+            return
+        try:
+            nuevo_id = crear_categoria_gasto(id_usuario, self.nuevo_nombre, self.nuevo_icono)
+        except ValueError as e:
+            self.error_nueva = str(e)
+            return
+        self.opciones_categorias = categorias_gasto(id_usuario)
+        self._elegir_categoria(str(nuevo_id))
+        # El donut tiene que enseñar ya la categoría nueva.
+        await self._recargar()
+
+    # --- Guardar ----------------------------------------------------------
+
+    @rx.event
+    async def guardar(self):
+        importe = calculadora.evaluar(self.expresion)
+        fecha = periodos.a_fecha(self.fecha_alta)
         if importe is None or importe == 0:
             self.error = "Escribe un importe (negativo si es una devolución)."
             return
-        if abs(importe) > _MAXIMO:
+        if abs(importe) > calculadora.MAXIMO:
             self.error = "El importe es demasiado grande."
             return
         if not self.id_categoria:
-            self.error = "Elige una categoría."
+            self.vista = VISTA_CATEGORIAS
             return
         if not self.id_cuenta_alta:
             self.error = "Elige una cuenta."
@@ -114,7 +268,7 @@ class AltaGastoState(ResumenState):
             self.error = "La fecha no es válida."
             return
 
-        id_usuario = (await self.get_state(AuthState)).current_user["id"]
+        id_usuario = await self._id_usuario()
         if not id_usuario:
             return
         try:
@@ -124,7 +278,7 @@ class AltaGastoState(ResumenState):
                 int(self.id_cuenta_alta),
                 fecha,
                 importe,
-                str(datos.get("notas", "")),
+                self.notas,
             )
         except ValueError as e:
             self.error = str(e)

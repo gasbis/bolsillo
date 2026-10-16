@@ -21,6 +21,7 @@ import math
 
 import reflex as rx
 
+from bolsillo.iconos import COLOR_POR_DEFECTO, COLORES
 from bolsillo.states.alta_gasto_state import AltaGastoState
 from bolsillo.states.resumen_state import ResumenState, euros
 
@@ -48,10 +49,6 @@ HUECOS: list[tuple[float, float]] = (
     + [(7.0, y) for y in reversed(_COL)]
 )
 
-COLORES = [
-    "#6366F1", "#8B5CF6", "#A855F7", "#D946EF", "#EC4899", "#F43F5E", "#F97316",
-    "#EAB308", "#84CC16", "#22C55E", "#14B8A6", "#06B6D4", "#0EA5E9", "#3B82F6",
-]
 
 # El anillo empieza en el ángulo del primer hueco (arriba a la izquierda) y
 # avanza en el mismo sentido que los huecos: así cada línea sale más o
@@ -92,10 +89,9 @@ def _linea(ang: float, hueco: tuple[float, float]) -> dict[str, str]:
     }
 
 
-# Color por defecto de `Categoria.color`: si el usuario no ha elegido
-# uno, se usa el de la paleta según el hueco para que el anillo no salga
-# todo gris.
-_COLOR_POR_DEFECTO = "#64748b"
+# Si el usuario no ha elegido color para una categoría
+# (COLOR_POR_DEFECTO), se usa el de la paleta según el hueco para que el
+# anillo no salga todo gris.
 _ICONO_OTROS = "ellipsis"
 _COLOR_OTROS = "#94a3b8"
 
@@ -119,7 +115,7 @@ def _huecos(categorias: list[dict]) -> list[dict]:
     res = []
     for i, c in enumerate(categorias):
         color = str(c["color"])
-        if not color or color.lower() == _COLOR_POR_DEFECTO:
+        if not color or color.lower() == COLOR_POR_DEFECTO:
             color = COLORES[i]
         res.append({**c, "color": color, "importe": float(c["importe"]), "hueco": i})
     return res

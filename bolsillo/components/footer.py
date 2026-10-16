@@ -1,5 +1,8 @@
 import reflex as rx
 
+from bolsillo.states.alta_gasto_state import AltaGastoState
+
+
 def footer() -> rx.Component:
     return rx.vstack(
         rx.divider(size="4"),
@@ -17,6 +20,8 @@ def footer() -> rx.Component:
                 size="4",
                 color_scheme="red",
                 radius="full",
+                # Alta de gasto sin categoría elegida.
+                on_click=AltaGastoState.abrir(""),
             ),
             rx.spacer(),
             width="100%",

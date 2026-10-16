@@ -1,8 +1,6 @@
 import reflex as rx
 
-
-
-ICONOS = ["utensils", "chef_hat", "fish", "cooking-pot", "cookie", "banana", "soup", "salad", "beef", "pizza", "carrot", "bean", "egg-fried", "ice-cream-cone", "candy", "croissant", "drumstick", "cherry", "ham", "grape", "dessert", "sandwich", "broccoli", "candy-cane", "bean-off", "blender", "nut", "ice-cream-bowl", "candy-off", "popsicle", "lollipop", "nut-off", "beef-off", "armchair", "bed-double", "bed", "shelving-unit", "sofa", "shopping-cart", "shopping-basket", "phone", "home", "store", "fuel", "droplet", "utility-pole", "zap", "monitor-play", "clapperboard", "tv", "luggage", "briefcase", "shirt", "train-front", "plane", "wallet-cards", "coins", "piggy-bank", "user-round", "wallet", "landmark", "hand_coins", "euro", "piggy_bank", "gift"] 
+from bolsillo.iconos import ICONOS
 
 CATEGORIA = ("Cuenta", "Ingresos", "Gastos")
 
