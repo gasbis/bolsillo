@@ -1,6 +1,7 @@
 import reflex as rx
 
 from bolsillo import periodos
+from bolsillo.components.selector_cuenta import selector_cuenta
 from bolsillo.components.user_dialogs import dialogos_usuario
 from bolsillo.states.alta_transferencia_state import AltaTransferenciaState
 from bolsillo.states.auth_state import AuthState
@@ -27,11 +28,11 @@ def filtros() -> rx.Component:
     recalcula al momento los datos de la pantalla principal."""
     return rx.flex(
         rx.text("Cuenta", size="1", weight="bold", color_scheme="gray"),
-        rx.select(
-            ResumenState.nombres_cuentas,
-            value=ResumenState.cuenta,
-            on_change=ResumenState.set_cuenta,
-            width="100%",
+        selector_cuenta(
+            ResumenState.opciones_filtro_cuenta,
+            ResumenState.cuenta,
+            ResumenState.set_cuenta,
+            clave="nombre",
         ),
         rx.divider(),
         rx.text("Fecha", size="1", weight="bold", color_scheme="gray"),

@@ -15,6 +15,11 @@ from bolsillo.resumen_db import CERO, cuentas_usuario, resumen
 from bolsillo.states.auth_state import AuthState
 
 TODAS_CUENTAS = "Todas"
+ICONO_TODAS = "layers"
+# Id de la porción del donut con las transferencias que salen de la
+# cuenta elegida (no es una categoría: tocarla abre el alta de
+# transferencia, ver AltaGastoState.abrir).
+ID_TRANSFERENCIAS = "transferencias"
 
 
 def euros(valor) -> str:
@@ -35,7 +40,14 @@ class ResumenState(rx.State):
     # Nombre de la cuenta elegida o TODAS_CUENTAS. Se guarda el nombre
     # (único por usuario) porque es lo que maneja rx.select.
     cuenta: str = TODAS_CUENTAS
-    cuentas: list[dict[str, str]] = []  # [{"id": "3", "nombre": "Banco"}]
+    # Cuentas activas con su saldo actual, para el filtro y los selectores
+    # de cuenta de los formularios: [{"id": "3", "nombre": "Banco",
+    # "icono": "landmark", "saldo": "1.234,56 €", "negativo": ""}]
+    # ("negativo" no vacío si el saldo es < 0).
+    cuentas: list[dict[str, str]] = []
+    # Saldo de todas las cuentas juntas, para la opción "Todas" del filtro.
+    texto_saldo_total: str = euros(CERO)
+    saldo_total_negativo: bool = False
 
     # --- Datos del periodo ------------------------------------------------
     # Categorías de gasto en su orden: id, nombre, icono, color e importe
@@ -44,14 +56,25 @@ class ResumenState(rx.State):
     texto_gastos: str = euros(CERO)
     texto_ingresos: str = euros(CERO)
     # Saldo del periodo: ingresos - gastos (no el saldo de las cuentas).
+    # Con una cuenta elegida, sus transferencias cuentan como ingresos
+    # (entrantes) y gastos (salientes); ver resumen_db.Resumen.
     texto_saldo: str = euros(CERO)
     saldo_negativo: bool = False
 
     # --- Vars derivadas para la interfaz ----------------------------------
 
     @rx.var
-    def nombres_cuentas(self) -> list[str]:
-        return [TODAS_CUENTAS] + [c["nombre"] for c in self.cuentas]
+    def opciones_filtro_cuenta(self) -> list[dict[str, str]]:
+        """Opciones del filtro de cuenta: "Todas" (con el saldo total) y
+        luego cada cuenta. El valor del filtro es el nombre."""
+        todas = {
+            "id": TODAS_CUENTAS,
+            "nombre": TODAS_CUENTAS,
+            "icono": ICONO_TODAS,
+            "saldo": self.texto_saldo_total,
+            "negativo": "1" if self.saldo_total_negativo else "",
+        }
+        return [todas] + self.cuentas
 
     @rx.var
     def texto_periodo(self) -> str:
@@ -94,7 +117,20 @@ class ResumenState(rx.State):
         id_usuario = (await self.get_state(AuthState)).current_user["id"]
         if not id_usuario:
             return
-        self.cuentas = cuentas_usuario(id_usuario)
+        cuentas = cuentas_usuario(id_usuario)
+        self.cuentas = [
+            {
+                "id": c["id"],
+                "nombre": c["nombre"],
+                "icono": c["icono"],
+                "saldo": euros(c["saldo"]),
+                "negativo": "1" if c["saldo"] < 0 else "",
+            }
+            for c in cuentas
+        ]
+        total = sum((c["saldo"] for c in cuentas), CERO)
+        self.texto_saldo_total = euros(total)
+        self.saldo_total_negativo = total < 0
         if self.cuenta != TODAS_CUENTAS and self._id_cuenta() is None:
             # La cuenta elegida ya no existe o se ha archivado.
             self.cuenta = TODAS_CUENTAS
@@ -106,7 +142,7 @@ class ResumenState(rx.State):
 
         self.categorias = [
             {
-                "id": str(g.id),
+                "id": ID_TRANSFERENCIAS if g.es_transferencia else str(g.id),
                 "nombre": g.nombre,
                 "icono": g.icono,
                 "color": g.color,

@@ -24,8 +24,8 @@ def _boton_movimientos() -> rx.Component:
 
 
 def _fila_saldo() -> rx.Component:
-    """Saldo del periodo elegido: ingresos - gastos (las transferencias
-    no cuentan)."""
+    """Saldo del periodo elegido: ingresos - gastos. Con una cuenta
+    elegida, sus transferencias cuentan como ingresos o gastos."""
     return rx.flex(
         _boton_movimientos(),
         rx.box(

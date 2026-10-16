@@ -22,6 +22,7 @@ encima de otros, que en el móvil se comportan mal.
 
 import reflex as rx
 
+from bolsillo.components.selector_cuenta import selector_cuenta
 from bolsillo.components.teclado import (
     SIN_ZOOM as _SIN_ZOOM,
     boton_borrar,
@@ -60,17 +61,10 @@ def _selector_cuenta() -> rx.Component:
     return rx.cond(
         AltaGastoState.sin_cuentas,
         rx.callout("Primero tienes que crear una cuenta.", color_scheme="amber", size="1", width="100%"),
-        rx.select.root(
-            rx.select.trigger(placeholder="Elige cuenta", width="100%"),
-            rx.select.content(
-                rx.foreach(
-                    AltaGastoState.cuentas,
-                    lambda o: rx.select.item(o["nombre"], value=o["id"]),
-                ),
-            ),
-            value=AltaGastoState.id_cuenta_alta,
-            on_change=AltaGastoState.set_id_cuenta_alta,
-            size="2",
+        selector_cuenta(
+            AltaGastoState.cuentas,
+            AltaGastoState.id_cuenta_alta,
+            AltaGastoState.set_id_cuenta_alta,
         ),
     )
 

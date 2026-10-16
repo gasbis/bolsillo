@@ -9,6 +9,7 @@ La flecha entre las cuentas se puede tocar para intercambiarlas.
 
 import reflex as rx
 
+from bolsillo.components.selector_cuenta import selector_cuenta
 from bolsillo.components.teclado import (
     SIN_ZOOM,
     boton_borrar,
@@ -21,18 +22,7 @@ from bolsillo.states.alta_transferencia_state import AltaTransferenciaState as S
 
 
 def _selector_cuenta(valor, al_cambiar, texto_vacio: str) -> rx.Component:
-    return rx.select.root(
-        rx.select.trigger(placeholder=texto_vacio, width="100%"),
-        rx.select.content(
-            rx.foreach(
-                S.cuentas,
-                lambda o: rx.select.item(o["nombre"], value=o["id"]),
-            ),
-        ),
-        value=valor,
-        on_change=al_cambiar,
-        size="3",
-    )
+    return selector_cuenta(S.cuentas, valor, al_cambiar, placeholder=texto_vacio, size="3")
 
 
 def _flecha() -> rx.Component:

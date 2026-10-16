@@ -33,7 +33,8 @@ from bolsillo import calculadora, periodos
 from bolsillo.iconos import ICONOS
 from bolsillo.models import TIPO_GASTO, TIPO_INGRESO
 from bolsillo.states.auth_state import AuthState
-from bolsillo.states.resumen_state import ResumenState, euros
+from bolsillo.states.alta_transferencia_state import AltaTransferenciaState
+from bolsillo.states.resumen_state import ID_TRANSFERENCIAS, ResumenState, euros
 from bolsillo.states.volver import volver_a
 from bolsillo.transacciones_db import (
     borrar_movimiento,
@@ -192,7 +193,10 @@ class AltaGastoState(ResumenState):
     async def abrir(self, id_categoria: str):
         """Alta de un GASTO: pulsación corta sobre un icono, o botón de
         gasto del pie con `id_categoria` vacío (también el hueco "Otros"
-        del donut)."""
+        del donut). La porción "Transferencias" del donut abre en su lugar
+        el alta de transferencia."""
+        if id_categoria == ID_TRANSFERENCIAS:
+            return AltaTransferenciaState.abrir_desde_cuenta
         await self._abrir(TIPO_GASTO, id_categoria)
 
     @rx.event

@@ -1,6 +1,8 @@
 """Formulario de alta de una transferencia entre dos cuentas.
 
-Se abre con el botón de transferencia (flechas ⇄) de la cabecera.
+Se abre con el botón de transferencia (flechas ⇄) de la cabecera o, con
+una cuenta elegida en el filtro, tocando la porción "Transferencias" del
+donut (entonces propone esa cuenta como origen).
 Pide fecha, importe (con el mismo teclado de calculadora que el
 gasto), cuenta de origen, cuenta de destino y notas. Propone las cuentas
 de la última transferencia anotada.
@@ -112,6 +114,21 @@ class AltaTransferenciaState(ResumenState):
 
     @rx.event
     async def abrir(self):
+        """Botón de transferencia de la cabecera."""
+        await self._abrir()
+
+    @rx.event
+    async def abrir_desde_cuenta(self):
+        """Porción "Transferencias" del donut (solo sale con una cuenta
+        elegida en el filtro): propone esa cuenta como origen."""
+        await self._abrir()
+        id_cuenta = self._id_cuenta()
+        if id_cuenta is not None:
+            self.id_origen = str(id_cuenta)
+            if self.id_destino == self.id_origen:
+                self.id_destino = ""
+
+    async def _abrir(self):
         id_usuario = await self._id_usuario()
         if not id_usuario:
             return
