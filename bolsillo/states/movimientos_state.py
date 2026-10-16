@@ -48,6 +48,7 @@ from bolsillo.resumen_db import (
 )
 from bolsillo.states.auth_state import AuthState
 from bolsillo.states.resumen_state import ResumenState, euros
+from bolsillo.states.volver import ORIGEN_MOVIMIENTOS
 
 AGRUPAR_CATEGORIA = "categoria"
 AGRUPAR_FECHA = "fecha"
@@ -306,5 +307,5 @@ class MovimientosState(ResumenState):
         self.desplegado = clave_grupo
         self.abierto = False
         if tipo == TIPO_TRANSFERENCIA:
-            return AltaTransferenciaState.editar(id_movimiento)
-        return AltaGastoState.editar(id_movimiento)
+            return AltaTransferenciaState.editar(id_movimiento, ORIGEN_MOVIMIENTOS)
+        return AltaGastoState.editar(id_movimiento, ORIGEN_MOVIMIENTOS)

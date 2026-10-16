@@ -4,6 +4,7 @@ from bolsillo import periodos
 from bolsillo.components.user_dialogs import dialogos_usuario
 from bolsillo.states.alta_transferencia_state import AltaTransferenciaState
 from bolsillo.states.auth_state import AuthState
+from bolsillo.states.buscador_state import BuscadorState
 from bolsillo.states.resumen_state import ResumenState
 
 _NAV_ITEMS = [
@@ -116,7 +117,10 @@ def header() -> rx.Component:
                 rx.icon_button(
                     rx.icon(tag="search", size=20),
                     size="1",
-                ),        
+                    # Buscador de movimientos (components/buscador.py).
+                    on_click=BuscadorState.abrir,
+                    custom_attrs={"aria-label": "Buscar"},
+                ),
             ),
             rx.flex(
                 rx.icon_button(

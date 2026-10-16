@@ -2,6 +2,7 @@ import reflex as rx
 
 from bolsillo.components.alta_gasto import dialogo_alta_gasto
 from bolsillo.components.alta_transferencia import dialogo_alta_transferencia
+from bolsillo.components.buscador import dialogo_buscador
 from bolsillo.components.donut import grafico_categorias
 from bolsillo.components.footer import footer
 from bolsillo.components.header import header
@@ -108,6 +109,7 @@ def index() -> rx.Component:
         dialogo_alta_gasto(),
         dialogo_alta_transferencia(),
         dialogo_movimientos(),
+        dialogo_buscador(),
         direction="column",
         height="100dvh",
         width="100%",

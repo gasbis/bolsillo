@@ -34,6 +34,7 @@ from bolsillo.iconos import ICONOS
 from bolsillo.models import TIPO_GASTO, TIPO_INGRESO
 from bolsillo.states.auth_state import AuthState
 from bolsillo.states.resumen_state import ResumenState, euros
+from bolsillo.states.volver import volver_a
 from bolsillo.transacciones_db import (
     borrar_movimiento,
     categorias,
@@ -87,8 +88,9 @@ class AltaGastoState(ResumenState):
     # Si el usuario cambia la cuenta a mano, elegir después una categoría
     # ya no se la cambia.
     _cuenta_elegida_a_mano: bool = False
-    # Abierto desde el listado de movimientos: al terminar se vuelve a él.
-    _desde_lista: bool = False
+    # Desde dónde se abrió para editar (ORIGEN_MOVIMIENTOS u
+    # ORIGEN_BUSCADOR): al terminar se vuelve a él. "" = alta normal.
+    _volver_a: str = ""
 
     # --- Vars derivadas para la interfaz ----------------------------------
 
@@ -175,17 +177,14 @@ class AltaGastoState(ResumenState):
         self.vista = VISTA_FORMULARIO
 
     def _terminar(self) -> list:
-        """Cierra el diálogo. Si se abrió desde el listado de movimientos,
-        devuelve el evento para volver a él (si no, una lista vacía)."""
+        """Cierra el diálogo. Si se abrió desde el listado de movimientos
+        o desde el buscador, devuelve el evento para volver a él (si no,
+        una lista vacía)."""
         self.abierto = False
         self.error = ""
         self.confirmar_borrado = False
-        if not self._desde_lista:
-            return []
-        self._desde_lista = False
-        from bolsillo.states.movimientos_state import MovimientosState
-
-        return [MovimientosState.reabrir]
+        origen, self._volver_a = self._volver_a, ""
+        return volver_a(origen)
 
     # --- Abrir / cerrar ---------------------------------------------------
 
@@ -226,21 +225,20 @@ class AltaGastoState(ResumenState):
         self.error = ""
         self.id_edicion = ""
         self.confirmar_borrado = False
-        self._desde_lista = False
+        self._volver_a = ""
         self.abierto = True
 
     @rx.event
-    async def editar(self, id_movimiento: str):
-        """Desde el listado de movimientos: abre el gasto o ingreso con
-        sus datos para modificarlo o borrarlo."""
+    async def editar(self, id_movimiento: str, origen: str):
+        """Desde el listado de movimientos o el buscador (`origen`, ver
+        states/volver.py): abre el gasto o ingreso con sus datos para
+        modificarlo o borrarlo."""
         id_usuario = await self._id_usuario()
         if not id_usuario or not id_movimiento.isdigit():
             return
         mov = obtener_movimiento(id_usuario, int(id_movimiento))
         if mov is None or mov["tipo"] not in (TIPO_GASTO, TIPO_INGRESO):
-            from bolsillo.states.movimientos_state import MovimientosState
-
-            return [rx.toast.error("Ese movimiento ya no existe."), MovimientosState.reabrir]
+            return [rx.toast.error("Ese movimiento ya no existe."), *volver_a(origen)]
         if not self.cuentas:
             await self._recargar()
         self.tipo = mov["tipo"]
@@ -259,7 +257,7 @@ class AltaGastoState(ResumenState):
         self.error = ""
         self.id_edicion = id_movimiento
         self.confirmar_borrado = False
-        self._desde_lista = True
+        self._volver_a = origen
         self.abierto = True
 
     @rx.event

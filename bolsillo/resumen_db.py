@@ -73,6 +73,8 @@ class Movimiento:
     id_destino: int = 0
     origen: str = ""
     destino: str = ""
+    # Solo gastos e ingresos: nombre de su cuenta (para el buscador).
+    cuenta: str = ""
 
     def efecto(self, id_cuenta: Optional[int]) -> Decimal:
         """Lo que suma o resta al saldo del periodo: + ingreso, - gasto
@@ -311,6 +313,7 @@ def movimientos(
                         categoria=c.nombre,
                         icono=c.icono,
                         color=colores.get(c.id, color_categoria(c.color, 0)),
+                        cuenta=nombres_cuentas.get(t.id_cuenta, ""),
                     )
                 )
         return res
