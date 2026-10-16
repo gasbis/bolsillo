@@ -2,27 +2,30 @@
 
   ← Categorías
   [ Gastos | Ingresos | Cuentas ]
-  (icono) Comida                 >
-  (icono) Casa                   >
-  (icono) Banco        1.234,56 € >
+  (icono) Comida                    >
+  (icono) Banco          1.234,56 € >
+  (icono) Viejo banco  Archivada  0 € >   ← atenuada
   ...
   [ + Añadir categoría ]
 
-Tocar una fila abre el diálogo para cambiar el nombre y el icono o
-eliminarla; "Añadir" abre el mismo diálogo vacío. Ver
-states/categorias_state.py.
+Tocar una fila abre el diálogo; "Añadir" abre el mismo diálogo vacío.
+Las vistas del diálogo y sus reglas están en states/categorias_state.py.
 """
 
 import reflex as rx
 
-from bolsillo.components.teclado import SIN_ZOOM, boton_borrar, cabecera_dialogo
+from bolsillo.components.teclado import SIN_ZOOM, cabecera_dialogo
 from bolsillo.iconos import ICONOS
 from bolsillo.states.categorias_state import (
     PESTANA_CUENTAS,
     PESTANA_GASTOS,
     PESTANA_INGRESOS,
+    VISTA_ARCHIVADA,
+    VISTA_BORRAR,
     CategoriasState,
 )
+
+GRIS = "#64748b"
 
 
 def _circulo_icono(icono, color) -> rx.Component:
@@ -37,6 +40,13 @@ def _circulo_icono(icono, color) -> rx.Component:
         border_radius="50%",
         border=f"2px solid {color}",
         background_color=f"{color}1A",
+    )
+
+
+def _error() -> rx.Component:
+    return rx.cond(
+        CategoriasState.error != "",
+        rx.callout(CategoriasState.error, color_scheme="red", size="1", width="100%"),
     )
 
 
@@ -82,8 +92,9 @@ def _pestanas() -> rx.Component:
 
 
 def _fila(e: rx.Var) -> rx.Component:
+    archivada = e["archivada"] != ""
     return rx.flex(
-        _circulo_icono(e["icono"].to(str), e["color"].to(str)),
+        _circulo_icono(e["icono"].to(str), rx.cond(archivada, GRIS, e["color"].to(str))),
         rx.text(
             e["nombre"],
             size="3",
@@ -93,6 +104,7 @@ def _fila(e: rx.Var) -> rx.Component:
             text_overflow="ellipsis",
             white_space="nowrap",
         ),
+        rx.cond(archivada, rx.badge("Archivada", color_scheme="gray", variant="soft")),
         rx.cond(
             e["detalle"] != "",
             rx.text(
@@ -110,6 +122,7 @@ def _fila(e: rx.Var) -> rx.Component:
         padding_x="1em",
         padding_y="0.6em",
         border_bottom="1px solid var(--gray-a4)",
+        opacity=rx.cond(archivada, "0.5", "1"),
         cursor="pointer",
         role="button",
         _hover={"background_color": "var(--gray-a2)"},
@@ -155,7 +168,7 @@ def _boton_anadir() -> rx.Component:
     )
 
 
-# --- Diálogo de alta / edición ----------------------------------------------
+# --- Vista editar / crear ---------------------------------------------------
 
 
 def _boton_icono(icono: str) -> rx.Component:
@@ -173,8 +186,7 @@ def _boton_icono(icono: str) -> rx.Component:
 
 
 def _vista_previa() -> rx.Component:
-    """Icono elegido (con el color de la categoría si ya lo tiene) y el
-    nombre."""
+    """Icono elegido (con su color si ya lo tiene) y el nombre."""
     return rx.flex(
         rx.cond(
             CategoriasState.icono == "",
@@ -191,7 +203,7 @@ def _vista_previa() -> rx.Component:
             rx.cond(
                 CategoriasState.color != "",
                 _circulo_icono(CategoriasState.icono, CategoriasState.color),
-                _circulo_icono(CategoriasState.icono, "#64748b"),
+                _circulo_icono(CategoriasState.icono, GRIS),
             ),
         ),
         rx.input(
@@ -209,74 +221,257 @@ def _vista_previa() -> rx.Component:
     )
 
 
-def _campo_saldo_inicial() -> rx.Component:
-    """Solo al crear una cuenta: después el saldo se corrige con
-    "ajustar saldo" (que deja el movimiento anotado)."""
+def _campo_saldo() -> rx.Component:
+    """Cuentas: saldo inicial al crearla, saldo actual al editarla (su
+    cambio anota un ajuste)."""
     return rx.cond(
-        CategoriasState.es_cuenta & ~CategoriasState.es_edicion,
+        CategoriasState.es_cuenta,
         rx.flex(
-            rx.text("Saldo inicial", size="1", weight="bold", color_scheme="gray", flex_shrink="0"),
-            rx.input(
-                value=CategoriasState.saldo_inicial,
-                on_change=CategoriasState.set_saldo_inicial,
-                placeholder="0,00",
-                input_mode="decimal",
-                auto_complete=False,
-                size="2",
-                flex="1",
-                text_align="right",
+            rx.flex(
+                rx.text(
+                    CategoriasState.etiqueta_saldo,
+                    size="1",
+                    weight="bold",
+                    color_scheme="gray",
+                    flex_shrink="0",
+                    width="6.5em",
+                ),
+                rx.input(
+                    value=CategoriasState.saldo,
+                    on_change=CategoriasState.set_saldo,
+                    placeholder="0,00",
+                    input_mode="decimal",
+                    auto_complete=False,
+                    size="2",
+                    flex="1",
+                    text_align="right",
+                ),
+                rx.text("€", size="2"),
+                rx.icon_button(
+                    rx.icon(tag="diff", size=16),
+                    on_click=CategoriasState.cambiar_signo_saldo,
+                    type="button",
+                    size="2",
+                    variant="soft",
+                    color_scheme="gray",
+                    custom_attrs={"aria-label": "Cambiar signo"},
+                    style=SIN_ZOOM,
+                ),
+                align="center",
+                spacing="2",
+                width="100%",
             ),
-            rx.text("€", size="2"),
-            align="center",
-            spacing="2",
+            rx.cond(
+                CategoriasState.aviso_saldo != "",
+                rx.text(CategoriasState.aviso_saldo, size="1", color_scheme="amber"),
+            ),
+            direction="column",
+            spacing="1",
             width="100%",
         ),
     )
+
+
+def _vista_editar() -> rx.Component:
+    return rx.flex(
+        _vista_previa(),
+        _campo_saldo(),
+        rx.text("Icono", size="1", weight="bold", color_scheme="gray"),
+        rx.grid(
+            *[_boton_icono(i) for i in ICONOS],
+            columns="repeat(auto-fill, minmax(2.8em, 1fr))",
+            spacing="2",
+            width="100%",
+            max_height="36dvh",
+            overflow_y="auto",
+            padding="0.25em",
+        ),
+        _error(),
+        rx.button(
+            rx.icon(tag="check", size=20),
+            rx.cond(CategoriasState.es_edicion, "Guardar", "Crear"),
+            on_click=CategoriasState.guardar,
+            disabled=~CategoriasState.puede_guardar,
+            type="button",
+            size="4",
+            width="100%",
+            style=SIN_ZOOM,
+        ),
+        rx.cond(
+            CategoriasState.es_edicion,
+            rx.button(
+                rx.icon(tag="trash-2", size=18),
+                "Eliminar",
+                on_click=CategoriasState.ver_borrar,
+                type="button",
+                size="2",
+                width="100%",
+                color_scheme="red",
+                variant="soft",
+                style=SIN_ZOOM,
+            ),
+        ),
+        direction="column",
+        spacing="3",
+    )
+
+
+# --- Vista cuenta archivada -------------------------------------------------
+
+
+def _vista_archivada() -> rx.Component:
+    e = CategoriasState.elemento
+    return rx.flex(
+        rx.flex(
+            _circulo_icono(e["icono"].to(str), GRIS),
+            rx.text(e["nombre"], size="4", weight="medium", flex="1", min_width="0"),
+            rx.text(e["detalle"], size="2", color_scheme="gray", white_space="nowrap"),
+            align="center",
+            spacing="3",
+            width="100%",
+            opacity="0.6",
+        ),
+        rx.text(
+            "Esta cuenta está archivada: no aparece en el resto de la app, pero "
+            "sus movimientos se conservan. Restáurala para volver a usarla.",
+            size="2",
+            color_scheme="gray",
+        ),
+        _error(),
+        rx.button(
+            rx.icon(tag="archive-restore", size=20),
+            "Restaurar cuenta",
+            on_click=CategoriasState.restaurar,
+            type="button",
+            size="4",
+            width="100%",
+            style=SIN_ZOOM,
+        ),
+        rx.button(
+            rx.icon(tag="trash-2", size=18),
+            "Eliminar",
+            on_click=CategoriasState.ver_borrar,
+            type="button",
+            size="2",
+            width="100%",
+            color_scheme="red",
+            variant="soft",
+            style=SIN_ZOOM,
+        ),
+        direction="column",
+        spacing="3",
+    )
+
+
+# --- Vista eliminar ---------------------------------------------------------
+
+
+def _fusion() -> rx.Component:
+    """Categorías: elegir otra y pasarle los movimientos."""
+    return rx.flex(
+        rx.text("Fusionar con", size="1", weight="bold", color_scheme="gray"),
+        rx.select.root(
+            rx.select.trigger(placeholder="Elige una categoría", width="100%"),
+            rx.select.content(
+                rx.foreach(
+                    CategoriasState.opciones_fusion,
+                    lambda o: rx.select.item(o["nombre"], value=o["id"]),
+                ),
+            ),
+            value=CategoriasState.id_fusion,
+            on_change=CategoriasState.set_id_fusion,
+            size="3",
+        ),
+        rx.button(
+            rx.icon(tag="merge", size=20),
+            "Fusionar y conservar movimientos",
+            on_click=CategoriasState.fusionar,
+            disabled=CategoriasState.id_fusion == "",
+            type="button",
+            size="3",
+            width="100%",
+            style=SIN_ZOOM,
+        ),
+        direction="column",
+        spacing="2",
+        width="100%",
+    )
+
+
+def _archivar() -> rx.Component:
+    return rx.button(
+        rx.icon(tag="archive", size=20),
+        "Archivar y conservar movimientos",
+        on_click=CategoriasState.archivar,
+        type="button",
+        size="3",
+        width="100%",
+        style=SIN_ZOOM,
+    )
+
+
+def _vista_borrar() -> rx.Component:
+    return rx.flex(
+        rx.flex(
+            _circulo_icono(
+                CategoriasState.icono,
+                rx.cond(CategoriasState.color != "", CategoriasState.color, GRIS),
+            ),
+            rx.text(CategoriasState.elemento["nombre"], size="4", weight="medium"),
+            align="center",
+            spacing="3",
+        ),
+        rx.callout(
+            CategoriasState.aviso_borrado,
+            icon="triangle-alert",
+            color_scheme=rx.cond(CategoriasState.n_movimientos > 0, "red", "gray"),
+            size="1",
+            width="100%",
+        ),
+        rx.cond(CategoriasState.puede_fusionar, _fusion()),
+        rx.cond(CategoriasState.puede_archivar, _archivar()),
+        _error(),
+        rx.button(
+            rx.icon(tag="trash-2", size=18),
+            rx.cond(
+                CategoriasState.n_movimientos > 0,
+                "Eliminar definitivamente",
+                "Eliminar",
+            ),
+            on_click=CategoriasState.borrar,
+            type="button",
+            size="3",
+            width="100%",
+            color_scheme="red",
+            variant=rx.cond(CategoriasState.n_movimientos > 0, "outline", "solid"),
+            style=SIN_ZOOM,
+        ),
+        rx.button(
+            "Cancelar",
+            on_click=CategoriasState.volver,
+            type="button",
+            size="2",
+            width="100%",
+            variant="ghost",
+            color_scheme="gray",
+        ),
+        direction="column",
+        spacing="3",
+    )
+
+
+# --- Diálogo y página -------------------------------------------------------
 
 
 def _dialogo() -> rx.Component:
     return rx.dialog.root(
         rx.dialog.content(
             cabecera_dialogo(CategoriasState.titulo),
-            rx.flex(
-                _vista_previa(),
-                _campo_saldo_inicial(),
-                rx.text("Icono", size="1", weight="bold", color_scheme="gray"),
-                rx.grid(
-                    *[_boton_icono(i) for i in ICONOS],
-                    columns="repeat(auto-fill, minmax(2.8em, 1fr))",
-                    spacing="2",
-                    width="100%",
-                    max_height="40dvh",
-                    overflow_y="auto",
-                    padding="0.25em",
-                ),
-                rx.cond(
-                    CategoriasState.error != "",
-                    rx.callout(CategoriasState.error, color_scheme="red", size="1", width="100%"),
-                ),
-                rx.button(
-                    rx.icon(tag="check", size=20),
-                    rx.cond(CategoriasState.es_edicion, "Guardar", "Crear"),
-                    on_click=CategoriasState.guardar,
-                    disabled=~CategoriasState.puede_guardar,
-                    type="button",
-                    size="4",
-                    width="100%",
-                    style=SIN_ZOOM,
-                ),
-                boton_borrar(CategoriasState),
-                rx.cond(
-                    CategoriasState.confirmar_borrado,
-                    rx.text(
-                        "Si tiene movimientos no se borra: se archiva y sus movimientos se conservan.",
-                        size="1",
-                        color_scheme="gray",
-                        text_align="center",
-                    ),
-                ),
-                direction="column",
-                spacing="3",
+            rx.match(
+                CategoriasState.vista,
+                (VISTA_BORRAR, _vista_borrar()),
+                (VISTA_ARCHIVADA, _vista_archivada()),
+                _vista_editar(),
             ),
             max_width="420px",
             max_height="96dvh",
@@ -286,9 +481,6 @@ def _dialogo() -> rx.Component:
         open=CategoriasState.abierto,
         on_open_change=CategoriasState.set_abierto,
     )
-
-
-# --- Página -----------------------------------------------------------------
 
 
 def categorias() -> rx.Component:

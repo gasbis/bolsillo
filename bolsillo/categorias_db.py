@@ -1,11 +1,21 @@
-"""Operaciones de base de datos de la página de CATEGORÍAS Y CUENTAS:
-listar, crear, renombrar, cambiar el icono y eliminar.
+"""Operaciones de base de datos de la página de CATEGORÍAS Y CUENTAS.
 
-Eliminar:
-- Si la categoría o la cuenta no tiene movimientos, se borra de verdad.
-- Si los tiene, se ARCHIVA (`activa = False`): desaparece de la lista y
-  de los formularios de alta, pero sus movimientos siguen intactos y con
-  su nombre. Crear otra vez una con el mismo nombre la reactiva.
+Categorías (gasto e ingreso):
+- Se crean, renombran y cambian de icono.
+- Eliminar una categoría borra DEFINITIVAMENTE sus movimientos (no hay
+  papelera). Como alternativa se puede FUSIONAR con otra del mismo tipo:
+  sus movimientos pasan a la otra y la categoría desaparece.
+- La categoría "Ajuste" no se muestra en la edición: la gestiona la app
+  (ver transacciones_db.categoria_ajuste).
+
+Cuentas:
+- Se crean, renombran, cambian de icono y se les corrige el saldo. El
+  saldo no se toca directamente: se anota un gasto en "Ajuste" por la
+  diferencia (transacciones_db.ajustar_saldo).
+- Se pueden ARCHIVAR: dejan de salir en toda la app salvo en la lista de
+  edición, desde donde se restauran. Sus movimientos se conservan.
+- Eliminar una cuenta borra DEFINITIVAMENTE sus movimientos, también las
+  transferencias con otras cuentas (lo que cambia el saldo de estas).
 
 La creación de categorías ya vive en transacciones_db.crear_categoria
 (la usa también el formulario de alta) y aquí se reutiliza.
@@ -15,7 +25,7 @@ from decimal import Decimal
 
 import reflex as rx
 import sqlmodel
-from sqlalchemy import func, or_
+from sqlalchemy import delete, func, or_, update
 
 from bolsillo import calculadora
 from bolsillo.iconos import ICONOS
@@ -24,6 +34,7 @@ from bolsillo.transacciones_db import (
     CERO,
     LARGO_MAXIMO_NOMBRE,
     _normalizar_nombre,
+    categorias,
     saldo_cuenta,
 )
 
@@ -41,13 +52,29 @@ def _validar(nombre: str, icono: str, icono_actual: str = "") -> str:
     return nombre
 
 
+def _es_ajuste(c: Categoria) -> bool:
+    return c.tipo == TIPO_GASTO and c.nombre == CATEGORIA_AJUSTE
+
+
 # --- Categorías -------------------------------------------------------------
+
+
+def categorias_editables(id_usuario: int, tipo: str) -> list[dict[str, str]]:
+    """Categorías activas de un tipo para la página de edición: las del
+    formulario de alta, salvo "Ajuste"."""
+    return [
+        c
+        for c in categorias(id_usuario, tipo)
+        if not (tipo == TIPO_GASTO and c["nombre"] == CATEGORIA_AJUSTE)
+    ]
 
 
 def _categoria_del_usuario(session, id_usuario: int, id_categoria: int) -> Categoria:
     c = session.get(Categoria, id_categoria)
     if c is None or c.id_usuario != id_usuario:
         raise ValueError("La categoría ya no existe.")
+    if _es_ajuste(c):
+        raise ValueError(f"La categoría «{CATEGORIA_AJUSTE}» no se puede modificar.")
     return c
 
 
@@ -59,9 +86,8 @@ def editar_categoria(id_usuario: int, id_categoria: int, nombre: str, icono: str
     with rx.session() as session:
         c = _categoria_del_usuario(session, id_usuario, id_categoria)
         nombre = _validar(nombre, icono, c.icono)
-        if c.tipo == TIPO_GASTO and c.nombre == CATEGORIA_AJUSTE and nombre != c.nombre:
-            # El "ajustar saldo" de las cuentas la busca por su nombre.
-            raise ValueError(f"La categoría «{CATEGORIA_AJUSTE}» no se puede renombrar.")
+        if c.tipo == TIPO_GASTO and nombre.lower() == CATEGORIA_AJUSTE.lower():
+            raise ValueError(f"«{CATEGORIA_AJUSTE}» es un nombre reservado.")
         otra = session.exec(
             sqlmodel.select(Categoria).where(
                 Categoria.id_usuario == id_usuario,
@@ -71,56 +97,86 @@ def editar_categoria(id_usuario: int, id_categoria: int, nombre: str, icono: str
             )
         ).first()
         if otra is not None:
-            if otra.activa:
-                raise ValueError(f"Ya tienes la categoría «{otra.nombre}».")
-            raise ValueError(
-                f"Ya hay una categoría archivada «{otra.nombre}». "
-                "Créala de nuevo desde «Añadir» para recuperarla."
-            )
+            raise ValueError(f"Ya existe la categoría «{otra.nombre}».")
         c.nombre = nombre
         c.icono = icono
         session.add(c)
         session.commit()
 
 
-def borrar_categoria(id_usuario: int, id_categoria: int) -> bool:
-    """Borra la categoría o, si tiene movimientos, la archiva. Devuelve
-    True si se ha archivado y False si se ha borrado."""
+def movimientos_categoria(id_usuario: int, id_categoria: int) -> int:
+    """Cuántos movimientos tiene la categoría (para el aviso de borrado)."""
+    with rx.session() as session:
+        return session.exec(
+            sqlmodel.select(func.count()).where(
+                Transaccion.id_usuario == id_usuario,
+                Transaccion.id_categoria == id_categoria,
+            )
+        ).one()
+
+
+def borrar_categoria(id_usuario: int, id_categoria: int) -> int:
+    """Borra la categoría Y TODOS SUS MOVIMIENTOS. Devuelve cuántos
+    movimientos se han borrado."""
     with rx.session() as session:
         c = _categoria_del_usuario(session, id_usuario, id_categoria)
-        usos = session.exec(
-            sqlmodel.select(func.count()).where(
+        borrados = session.exec(
+            delete(Transaccion).where(
                 Transaccion.id_usuario == id_usuario,
                 Transaccion.id_categoria == c.id,
             )
-        ).one()
-        if usos:
-            c.activa = False
-            session.add(c)
-            archivada = True
-        else:
-            session.delete(c)
-            archivada = False
+        ).rowcount
+        session.delete(c)
         session.commit()
-        return archivada
+        return borrados
+
+
+def fusionar_categoria(id_usuario: int, id_origen: int, id_destino: int) -> int:
+    """Pasa todos los movimientos de `id_origen` a `id_destino` (del mismo
+    tipo, activa) y borra `id_origen`. Devuelve cuántos se han movido."""
+    if id_origen == id_destino:
+        raise ValueError("Elige otra categoría.")
+    with rx.session() as session:
+        origen = _categoria_del_usuario(session, id_usuario, id_origen)
+        destino = session.get(Categoria, id_destino)
+        if (
+            destino is None
+            or destino.id_usuario != id_usuario
+            or destino.tipo != origen.tipo
+            or not destino.activa
+        ):
+            raise ValueError("La categoría de destino no es válida.")
+        movidos = session.exec(
+            update(Transaccion)
+            .where(
+                Transaccion.id_usuario == id_usuario,
+                Transaccion.id_categoria == origen.id,
+            )
+            .values(id_categoria=destino.id)
+        ).rowcount
+        session.delete(origen)
+        session.commit()
+        return movidos
 
 
 # --- Cuentas ----------------------------------------------------------------
 
 
 def listar_cuentas(id_usuario: int) -> list[dict]:
-    """Cuentas activas del usuario, en su orden, con su saldo actual."""
+    """Todas las cuentas del usuario con su saldo actual: primero las
+    activas y después las archivadas, cada grupo en su orden."""
     with rx.session() as session:
         filas = session.exec(
             sqlmodel.select(Cuenta)
-            .where(Cuenta.id_usuario == id_usuario, Cuenta.activa == True)  # noqa: E712
-            .order_by(Cuenta.orden, Cuenta.nombre)
+            .where(Cuenta.id_usuario == id_usuario)
+            .order_by(Cuenta.activa.desc(), Cuenta.orden, Cuenta.nombre)
         ).all()
         return [
             {
                 "id": c.id,
                 "nombre": c.nombre,
                 "icono": c.icono,
+                "activa": c.activa,
                 "saldo": saldo_cuenta(session, id_usuario, c.id),
             }
             for c in filas
@@ -134,35 +190,30 @@ def _cuenta_del_usuario(session, id_usuario: int, id_cuenta: int) -> Cuenta:
     return c
 
 
-def _otra_cuenta_con_nombre(session, id_usuario: int, nombre: str, excepto: int | None):
+def _comprobar_nombre_cuenta(session, id_usuario: int, nombre: str, excepto: int | None):
     condiciones = [
         Cuenta.id_usuario == id_usuario,
         func.lower(Cuenta.nombre) == nombre.lower(),
     ]
     if excepto is not None:
         condiciones.append(Cuenta.id != excepto)
-    return session.exec(sqlmodel.select(Cuenta).where(*condiciones)).first()
+    otra = session.exec(sqlmodel.select(Cuenta).where(*condiciones)).first()
+    if otra is None:
+        return
+    if otra.activa:
+        raise ValueError(f"Ya tienes la cuenta «{otra.nombre}».")
+    raise ValueError(f"Ya tienes la cuenta «{otra.nombre}» archivada: restáurala desde la lista.")
 
 
 def crear_cuenta(id_usuario: int, nombre: str, icono: str, saldo_inicial: Decimal) -> int:
-    """Crea una cuenta y devuelve su id. Si había una archivada con ese
-    nombre, la reactiva con el icono nuevo y CONSERVA su saldo inicial
-    (sus movimientos antiguos dependen de él). ValueError si ya hay una
-    activa con ese nombre."""
+    """Crea una cuenta y devuelve su id. ValueError si ya hay otra con ese
+    nombre (activa o archivada)."""
     nombre = _validar(nombre, icono)
     saldo_inicial = Decimal(saldo_inicial or 0).quantize(CERO)
     if abs(saldo_inicial) > calculadora.MAXIMO:
         raise ValueError("El saldo inicial es demasiado grande.")
     with rx.session() as session:
-        existente = _otra_cuenta_con_nombre(session, id_usuario, nombre, None)
-        if existente is not None and existente.activa:
-            raise ValueError(f"Ya tienes la cuenta «{existente.nombre}».")
-        if existente is not None:
-            existente.activa = True
-            existente.icono = icono
-            session.add(existente)
-            session.commit()
-            return existente.id
+        _comprobar_nombre_cuenta(session, id_usuario, nombre, None)
         orden = session.exec(
             sqlmodel.select(func.coalesce(func.max(Cuenta.orden), -1)).where(
                 Cuenta.id_usuario == id_usuario
@@ -181,43 +232,53 @@ def crear_cuenta(id_usuario: int, nombre: str, icono: str, saldo_inicial: Decima
 
 
 def editar_cuenta(id_usuario: int, id_cuenta: int, nombre: str, icono: str) -> None:
-    """Cambia el nombre y el icono de una cuenta (el saldo se corrige
-    con "ajustar saldo", no aquí)."""
+    """Cambia el nombre y el icono de una cuenta activa. El saldo se
+    corrige aparte con transacciones_db.ajustar_saldo."""
     with rx.session() as session:
         c = _cuenta_del_usuario(session, id_usuario, id_cuenta)
+        if not c.activa:
+            raise ValueError("La cuenta está archivada: restáurala para editarla.")
         nombre = _validar(nombre, icono, c.icono)
-        otra = _otra_cuenta_con_nombre(session, id_usuario, nombre, c.id)
-        if otra is not None:
-            if otra.activa:
-                raise ValueError(f"Ya tienes la cuenta «{otra.nombre}».")
-            raise ValueError(
-                f"Ya hay una cuenta archivada «{otra.nombre}». "
-                "Créala de nuevo desde «Añadir» para recuperarla."
-            )
+        _comprobar_nombre_cuenta(session, id_usuario, nombre, c.id)
         c.nombre = nombre
         c.icono = icono
         session.add(c)
         session.commit()
 
 
-def borrar_cuenta(id_usuario: int, id_cuenta: int) -> bool:
-    """Borra la cuenta o, si tiene movimientos (también transferencias
-    que llegan a ella), la archiva. Devuelve True si se ha archivado."""
+def archivar_cuenta(id_usuario: int, id_cuenta: int, archivar: bool = True) -> None:
+    """Archiva (o restaura, con `archivar=False`) una cuenta."""
     with rx.session() as session:
         c = _cuenta_del_usuario(session, id_usuario, id_cuenta)
-        usos = session.exec(
-            sqlmodel.select(func.count()).where(
-                Transaccion.id_usuario == id_usuario,
-                or_(Transaccion.id_cuenta == c.id, Transaccion.id_cuenta_destino == c.id),
-            )
-        ).one()
-        if usos:
-            c.activa = False
-            session.add(c)
-            archivada = True
-        else:
-            session.delete(c)
-            archivada = False
+        c.activa = not archivar
+        session.add(c)
         session.commit()
-        return archivada
 
+
+def _de_la_cuenta(id_usuario: int, id_cuenta: int):
+    return (
+        Transaccion.id_usuario == id_usuario,
+        or_(Transaccion.id_cuenta == id_cuenta, Transaccion.id_cuenta_destino == id_cuenta),
+    )
+
+
+def movimientos_cuenta(id_usuario: int, id_cuenta: int) -> int:
+    """Cuántos movimientos tiene la cuenta, transferencias incluidas (para
+    el aviso de borrado)."""
+    with rx.session() as session:
+        return session.exec(
+            sqlmodel.select(func.count()).where(*_de_la_cuenta(id_usuario, id_cuenta))
+        ).one()
+
+
+def borrar_cuenta(id_usuario: int, id_cuenta: int) -> int:
+    """Borra la cuenta Y TODOS SUS MOVIMIENTOS, también las transferencias
+    desde o hacia ella. Devuelve cuántos movimientos se han borrado."""
+    with rx.session() as session:
+        c = _cuenta_del_usuario(session, id_usuario, id_cuenta)
+        borrados = session.exec(
+            delete(Transaccion).where(*_de_la_cuenta(id_usuario, c.id))
+        ).rowcount
+        session.delete(c)
+        session.commit()
+        return borrados
