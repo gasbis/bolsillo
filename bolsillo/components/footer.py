@@ -13,6 +13,8 @@ def footer() -> rx.Component:
                 size="4",
                 color_scheme="green",
                 radius="full",
+                # Alta de ingreso sin categoría elegida.
+                on_click=AltaGastoState.abrir_ingreso(""),
             ),
             rx.spacer(),
             rx.icon_button(

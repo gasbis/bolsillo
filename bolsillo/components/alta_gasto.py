@@ -1,4 +1,7 @@
-"""Diálogo de alta de un gasto, pensado para el móvil.
+"""Diálogo de alta de un gasto o de un ingreso, pensado para el móvil.
+Los dos son iguales; solo cambian el título, las categorías que se
+ofrecen y que un ingreso no admite importes negativos (ver
+AltaGastoState.tipo).
 
 Vista "formulario", de arriba abajo:
   fecha (hoy) · cuenta · importe · notas · teclado numérico · botón final.
@@ -6,7 +9,8 @@ El botón final es "Elegir categoría" (abre la vista "categorias") o, si
 la categoría ya está elegida, su icono y nombre con "Aceptar". En ambos
 casos solo se activa con un importe distinto de 0.
 
-Vista "categorias": rejilla con las categorías de gasto y "Nueva".
+Vista "categorias": rejilla con las categorías (de gasto o de
+ingreso) y "Nueva".
 Vista "nueva": nombre e icono de una categoría nueva.
 
 Las tres comparten el mismo diálogo (rx.cond) en vez de abrir diálogos
@@ -15,28 +19,19 @@ encima de otros, que en el móvil se comportan mal.
 
 import reflex as rx
 
-from bolsillo import calculadora
+from bolsillo.components.teclado import (
+    SIN_ZOOM as _SIN_ZOOM,
+    cabecera_dialogo,
+    campo_importe,
+    fila,
+    teclado,
+)
 from bolsillo.iconos import ICONOS
 from bolsillo.states.alta_gasto_state import (
     VISTA_CATEGORIAS,
     VISTA_NUEVA,
     AltaGastoState,
 )
-
-_SIN_ZOOM = {
-    # Que tocar rápido dos teclas no haga zoom ni seleccione texto.
-    "touch_action": "manipulation",
-    "user_select": "none",
-    "-webkit-tap-highlight-color": "transparent",
-}
-
-
-def _etiqueta(texto: str) -> rx.Component:
-    return rx.text(texto, size="1", weight="bold", color_scheme="gray", width="4.5em", flex_shrink="0")
-
-
-def _fila(etiqueta: str, campo: rx.Component) -> rx.Component:
-    return rx.flex(_etiqueta(etiqueta), campo, align="center", spacing="2", width="100%")
 
 
 def _circulo_icono(icono: rx.Var, color: rx.Var) -> rx.Component:
@@ -73,84 +68,6 @@ def _selector_cuenta() -> rx.Component:
             on_change=AltaGastoState.set_id_cuenta_alta,
             size="2",
         ),
-    )
-
-
-def _importe() -> rx.Component:
-    return rx.box(
-        rx.input(
-            value=AltaGastoState.expresion,
-            on_change=AltaGastoState.set_expresion,
-            placeholder="0,00",
-            type="text",
-            # Sin teclado del sistema en el móvil: se usa el de abajo.
-            # Con un teclado físico (ordenador) se puede escribir igual.
-            input_mode="none",
-            auto_complete=False,
-            size="3",
-            font_size="1.6em",
-            font_weight="bold",
-            text_align="right",
-            width="100%",
-            custom_attrs={"aria-label": "Importe"},
-        ),
-        rx.text(
-            AltaGastoState.texto_resultado,
-            size="2",
-            color_scheme="gray",
-            text_align="right",
-            min_height="1.4em",
-            padding_top="0.15em",
-        ),
-        width="100%",
-    )
-
-
-def _tecla(etiqueta, tecla: str, tipo: str = "numero", **estilo) -> rx.Component:
-    colores = {
-        "numero": dict(variant="soft", color_scheme="gray"),
-        "operador": dict(variant="soft", color_scheme="blue"),
-        "accion": dict(variant="soft", color_scheme="orange"),
-        "igual": dict(variant="solid", color_scheme="blue"),
-    }[tipo]
-    return rx.button(
-        etiqueta,
-        on_click=AltaGastoState.tecla(tecla),
-        type="button",
-        size="3",
-        height="100%",
-        min_height="2.9em",
-        font_size="1.25em",
-        font_weight="bold" if tipo != "numero" else "medium",
-        style=_SIN_ZOOM,
-        **colores,
-        **estilo,
-    )
-
-
-def _teclado() -> rx.Component:
-    """C  ⌫  ÷  ×
-       7  8  9  −
-       4  5  6  +
-       1  2  3  =
-       0     ,  ="""
-    c = calculadora
-    return rx.grid(
-        _tecla("C", c.LIMPIAR, "accion"),
-        _tecla(rx.icon(tag="delete", size=22), c.BORRAR, "accion", custom_attrs={"aria-label": "Borrar"}),
-        _tecla("÷", c.ENTRE, "operador"),
-        _tecla("×", c.POR, "operador"),
-        *[_tecla(n, n) for n in "789"],
-        _tecla("−", c.RESTA, "operador"),
-        *[_tecla(n, n) for n in "456"],
-        _tecla("+", c.SUMA, "operador"),
-        *[_tecla(n, n) for n in "123"],
-        _tecla("=", c.IGUAL, "igual", grid_row="span 2"),
-        _tecla("0", "0", grid_column="span 2"),
-        _tecla(",", c.COMA),
-        columns="4",
-        spacing="2",
-        width="100%",
     )
 
 
@@ -211,7 +128,7 @@ def _boton_final() -> rx.Component:
 
 def _vista_formulario() -> rx.Component:
     return rx.flex(
-        _fila(
+        fila(
             "Fecha",
             rx.input(
                 type="date",
@@ -221,8 +138,8 @@ def _vista_formulario() -> rx.Component:
                 flex="1",
             ),
         ),
-        _fila("Cuenta", rx.box(_selector_cuenta(), flex="1", min_width="0")),
-        _importe(),
+        fila("Cuenta", rx.box(_selector_cuenta(), flex="1", min_width="0")),
+        campo_importe(AltaGastoState),
         rx.input(
             value=AltaGastoState.notas,
             on_change=AltaGastoState.set_notas,
@@ -235,7 +152,7 @@ def _vista_formulario() -> rx.Component:
             AltaGastoState.error != "",
             rx.callout(AltaGastoState.error, color_scheme="red", size="1", width="100%"),
         ),
-        _teclado(),
+        teclado(AltaGastoState),
         _boton_final(),
         direction="column",
         spacing="2",
@@ -418,6 +335,7 @@ def _vista_nueva() -> rx.Component:
 
 
 def dialogo_alta_gasto() -> rx.Component:
+    """Diálogo único para gastos e ingresos."""
     return rx.dialog.root(
         rx.dialog.content(
             rx.match(
@@ -425,22 +343,7 @@ def dialogo_alta_gasto() -> rx.Component:
                 (VISTA_CATEGORIAS, _vista_categorias()),
                 (VISTA_NUEVA, _vista_nueva()),
                 rx.flex(
-                    rx.flex(
-                        rx.dialog.title("Nuevo gasto", size="4", margin="0"),
-                        rx.spacer(),
-                        rx.dialog.close(
-                            rx.icon_button(
-                                rx.icon(tag="x", size=20),
-                                type="button",
-                                variant="ghost",
-                                color_scheme="gray",
-                                custom_attrs={"aria-label": "Cerrar"},
-                            )
-                        ),
-                        align="center",
-                        width="100%",
-                        padding_bottom="0.5em",
-                    ),
+                    cabecera_dialogo(AltaGastoState.titulo),
                     _vista_formulario(),
                     direction="column",
                 ),

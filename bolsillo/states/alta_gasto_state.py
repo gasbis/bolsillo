@@ -1,12 +1,18 @@
-"""Formulario de alta de un gasto.
+"""Formulario de alta de un gasto o de un ingreso (`tipo`).
 
-Se abre de dos formas:
+Los dos formularios son el mismo; un ingreso solo cambia el título, las
+categorías que se ofrecen (las de ingreso) y que el importe tiene que
+ser positivo (un gasto puede ser negativo: devoluciones).
+
+Un gasto se abre de dos formas:
 - Pulsación corta sobre el icono de una categoría en la pantalla
   principal: la categoría ya viene elegida y el botón final la muestra
   e invita a aceptar.
 - Botón de gasto (flecha roja) del pie: sin categoría; el botón final
   ("Elegir categoría") abre el selector de categorías, desde el que
   también se puede crear una nueva.
+Un ingreso se abre con el botón de ingreso (flecha verde) del pie, sin
+categoría, y funciona igual que el segundo caso.
 
 El diálogo tiene tres vistas (VISTA_*): el formulario, el selector de
 categorías y la creación de una categoría nueva.
@@ -21,12 +27,13 @@ import reflex as rx
 
 from bolsillo import calculadora, periodos
 from bolsillo.iconos import ICONOS
+from bolsillo.models import TIPO_GASTO, TIPO_INGRESO
 from bolsillo.states.auth_state import AuthState
 from bolsillo.states.resumen_state import ResumenState, euros
 from bolsillo.transacciones_db import (
-    categorias_gasto,
-    crear_categoria_gasto,
-    crear_gasto,
+    categorias,
+    crear_categoria,
+    crear_movimiento,
     cuentas_por_defecto,
 )
 
@@ -38,6 +45,7 @@ VISTA_NUEVA = "nueva"
 class AltaGastoState(ResumenState):
     abierto: bool = False
     vista: str = VISTA_FORMULARIO
+    tipo: str = TIPO_GASTO  # TIPO_GASTO | TIPO_INGRESO
 
     # --- Formulario ---------------------------------------------------------
     fecha_alta: str = ""  # ISO 'AAAA-MM-DD' (formato de <input type="date">)
@@ -70,6 +78,10 @@ class AltaGastoState(ResumenState):
     # --- Vars derivadas para la interfaz ----------------------------------
 
     @rx.var
+    def es_ingreso(self) -> bool:
+        return self.tipo == TIPO_INGRESO
+
+    @rx.var
     def sin_cuentas(self) -> bool:
         return len(self.cuentas) == 0
 
@@ -77,18 +89,23 @@ class AltaGastoState(ResumenState):
     def importe_valido(self) -> bool:
         """Activa el botón de categoría / aceptar."""
         valor = calculadora.evaluar(self.expresion)
-        return valor is not None and valor != 0 and abs(valor) <= calculadora.MAXIMO
+        if valor is None or valor == 0 or abs(valor) > calculadora.MAXIMO:
+            return False
+        # Un ingreso no puede ser negativo.
+        return valor > 0 or self.tipo == TIPO_GASTO
 
     @rx.var
     def texto_resultado(self) -> str:
         """Debajo del importe: el valor que se va a guardar si hay
-        operaciones a medias ('= 18,50 €') y si es una devolución."""
+        operaciones a medias ('= 18,50 €') y si es una devolución (en un
+        ingreso, que no puede ser negativo)."""
         valor = calculadora.evaluar(self.expresion)
         if valor is None:
             return ""
         texto = f"= {euros(valor)}" if calculadora.tiene_operacion(self.expresion) else ""
         if valor < 0:
-            texto = f"{texto}  (devolución)".strip()
+            aviso = "(no puede ser negativo)" if self.tipo == TIPO_INGRESO else "(devolución)"
+            texto = f"{texto}  {aviso}".strip()
         return texto
 
     @rx.var
@@ -114,7 +131,7 @@ class AltaGastoState(ResumenState):
             return "Elegir categoría"
         if self.vista == VISTA_NUEVA:
             return "Nueva categoría"
-        return "Nuevo gasto"
+        return "Nuevo ingreso" if self.tipo == TIPO_INGRESO else "Nuevo gasto"
 
     # --- Internos -----------------------------------------------------------
 
@@ -141,21 +158,32 @@ class AltaGastoState(ResumenState):
 
     @rx.event
     async def abrir(self, id_categoria: str):
-        """Pulsación corta sobre un icono, o botón de gasto del pie con
-        `id_categoria` vacío (también el hueco "Otros" del donut)."""
+        """Alta de un GASTO: pulsación corta sobre un icono, o botón de
+        gasto del pie con `id_categoria` vacío (también el hueco "Otros"
+        del donut)."""
+        await self._abrir(TIPO_GASTO, id_categoria)
+
+    @rx.event
+    async def abrir_ingreso(self, id_categoria: str):
+        """Alta de un INGRESO: botón de ingreso del pie (sin categoría)."""
+        await self._abrir(TIPO_INGRESO, id_categoria)
+
+    async def _abrir(self, tipo: str, id_categoria: str):
         id_usuario = await self._id_usuario()
         if not id_usuario:
             return
         if not self.cuentas:
             await self._recargar()
-        self.opciones_categorias = categorias_gasto(id_usuario)
-        habitual, fijas = cuentas_por_defecto(id_usuario)
+        self.tipo = tipo
+        self.vista = VISTA_FORMULARIO
+        self.opciones_categorias = categorias(id_usuario, tipo)
+        habitual, fijas = cuentas_por_defecto(id_usuario, tipo=tipo)
         self._cuenta_habitual = str(habitual) if habitual else ""
         self._cuentas_fijas = {str(k): str(v) for k, v in fijas.items()}
         self._cuenta_elegida_a_mano = False
 
         # Una categoría archivada (sale en el donut por tener movimientos
-        # en el periodo) no admite gastos nuevos: se deja sin elegir.
+        # en el periodo) no admite movimientos nuevos: se deja sin elegir.
         ids_categorias = {c["id"] for c in self.opciones_categorias}
         self._elegir_categoria(id_categoria if id_categoria in ids_categorias else "")
 
@@ -237,11 +265,11 @@ class AltaGastoState(ResumenState):
         if not id_usuario:
             return
         try:
-            nuevo_id = crear_categoria_gasto(id_usuario, self.nuevo_nombre, self.nuevo_icono)
+            nuevo_id = crear_categoria(id_usuario, self.tipo, self.nuevo_nombre, self.nuevo_icono)
         except ValueError as e:
             self.error_nueva = str(e)
             return
-        self.opciones_categorias = categorias_gasto(id_usuario)
+        self.opciones_categorias = categorias(id_usuario, self.tipo)
         self._elegir_categoria(str(nuevo_id))
         # El donut tiene que enseñar ya la categoría nueva.
         await self._recargar()
@@ -252,8 +280,16 @@ class AltaGastoState(ResumenState):
     async def guardar(self):
         importe = calculadora.evaluar(self.expresion)
         fecha = periodos.a_fecha(self.fecha_alta)
+        es_ingreso = self.tipo == TIPO_INGRESO
         if importe is None or importe == 0:
-            self.error = "Escribe un importe (negativo si es una devolución)."
+            self.error = (
+                "Escribe un importe."
+                if es_ingreso
+                else "Escribe un importe (negativo si es una devolución)."
+            )
+            return
+        if es_ingreso and importe < 0:
+            self.error = "Un ingreso no puede ser negativo."
             return
         if abs(importe) > calculadora.MAXIMO:
             self.error = "El importe es demasiado grande."
@@ -272,8 +308,9 @@ class AltaGastoState(ResumenState):
         if not id_usuario:
             return
         try:
-            anotado = crear_gasto(
+            anotado = crear_movimiento(
                 id_usuario,
+                self.tipo,
                 int(self.id_categoria),
                 int(self.id_cuenta_alta),
                 fecha,
@@ -287,4 +324,5 @@ class AltaGastoState(ResumenState):
         self.abierto = False
         self.error = ""
         await self._recargar()
-        return rx.toast.success(f"Gasto anotado: {euros(anotado)}", duration=2500)
+        que = "Ingreso" if es_ingreso else "Gasto"
+        return rx.toast.success(f"{que} anotado: {euros(anotado)}", duration=2500)

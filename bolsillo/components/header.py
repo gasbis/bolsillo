@@ -2,6 +2,7 @@ import reflex as rx
 
 from bolsillo import periodos
 from bolsillo.components.user_dialogs import dialogos_usuario
+from bolsillo.states.alta_transferencia_state import AltaTransferenciaState
 from bolsillo.states.auth_state import AuthState
 from bolsillo.states.resumen_state import ResumenState
 
@@ -121,6 +122,8 @@ def header() -> rx.Component:
                 rx.icon_button(
                     rx.icon(tag="arrow-left-right", size=20),
                     size="1",
+                    # Alta de una transferencia entre cuentas.
+                    on_click=AltaTransferenciaState.abrir,
                 ),                
             ),
             rx.flex(
