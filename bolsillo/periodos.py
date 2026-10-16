@@ -139,3 +139,23 @@ def etiqueta(periodo: str, referencia: date, desde: str = "", hasta: str = "",
             return f"Hasta {_corta(fin)}"
         return "Todas las fechas"
     return "Todas las fechas"
+
+
+# --- Fechas sueltas (listado de movimientos) -------------------------------
+
+
+def fecha_corta(d: date, hoy: Optional[date] = None) -> str:
+    """'14 oct' (o '14 oct 2025' si no es de este año)."""
+    hoy = hoy or date.today()
+    return _corta(d, con_anyo=d.year != hoy.year)
+
+
+def fecha_dia(d: date, hoy: Optional[date] = None) -> str:
+    """Cabecera de un día en el listado: 'Hoy', 'Ayer' o
+    'Miércoles, 14 oct' (con el año si no es el actual)."""
+    hoy = hoy or date.today()
+    if d == hoy:
+        return "Hoy"
+    if d == hoy - timedelta(days=1):
+        return "Ayer"
+    return f"{_DIAS_SEMANA[d.weekday()].capitalize()}, {fecha_corta(d, hoy)}"

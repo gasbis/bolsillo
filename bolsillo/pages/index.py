@@ -5,16 +5,28 @@ from bolsillo.components.alta_transferencia import dialogo_alta_transferencia
 from bolsillo.components.donut import grafico_categorias
 from bolsillo.components.footer import footer
 from bolsillo.components.header import header
+from bolsillo.components.movimientos import dialogo_movimientos
+from bolsillo.states.movimientos_state import MovimientosState
 from bolsillo.states.resumen_state import ResumenState
 
 
+def _boton_movimientos() -> rx.Component:
+    """Los dos botones que flanquean el saldo hacen lo mismo: abren el
+    listado de movimientos del periodo (ver components/movimientos.py)."""
+    return rx.icon_button(
+        rx.icon(tag="menu", size=24),
+        variant="soft",
+        color_scheme="gray",
+        on_click=MovimientosState.abrir,
+        custom_attrs={"aria-label": "Movimientos"},
+    )
+
+
 def _fila_saldo() -> rx.Component:
+    """Saldo del periodo elegido: ingresos - gastos (las transferencias
+    no cuentan)."""
     return rx.flex(
-        rx.icon_button(
-            rx.icon(tag="menu", size=24),
-            variant="soft",
-            color_scheme="gray",
-        ),
+        _boton_movimientos(),
         rx.box(
             "SALDO: ",
             ResumenState.texto_saldo,
@@ -23,12 +35,9 @@ def _fila_saldo() -> rx.Component:
             padding_x="15px",
             padding_y="6px",
             font_weight="bold",
+            white_space="nowrap",
         ),
-        rx.icon_button(
-            rx.icon(tag="menu", size=24),
-            variant="soft",
-            color_scheme="gray",
-        ),
+        _boton_movimientos(),
         width="100%",
         justify="center",
         align="center",
@@ -98,6 +107,7 @@ def index() -> rx.Component:
         rx.box(footer(), width="100%", padding_bottom="0.5em", flex_shrink="0"),
         dialogo_alta_gasto(),
         dialogo_alta_transferencia(),
+        dialogo_movimientos(),
         direction="column",
         height="100dvh",
         width="100%",

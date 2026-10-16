@@ -43,6 +43,7 @@ class ResumenState(rx.State):
     categorias: list[dict[str, str | float]] = []
     texto_gastos: str = euros(CERO)
     texto_ingresos: str = euros(CERO)
+    # Saldo del periodo: ingresos - gastos (no el saldo de las cuentas).
     texto_saldo: str = euros(CERO)
     saldo_negativo: bool = False
 

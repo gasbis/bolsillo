@@ -1,5 +1,6 @@
 """Consultas para la pantalla principal: totales de un periodo y una
-cuenta (o todas), gasto por categoría y saldo.
+cuenta (o todas), gasto por categoría, saldo del periodo y listado de
+movimientos.
 
 Todo filtra por `id_usuario`. Los importes salen como `Decimal`; el
 state los pasa a texto/float solo para mostrarlos.
@@ -14,6 +15,7 @@ import reflex as rx
 import sqlmodel
 from sqlalchemy import func
 
+from bolsillo.iconos import color_categoria
 from bolsillo.models import (
     TIPO_GASTO,
     TIPO_INGRESO,
@@ -40,7 +42,21 @@ class Resumen:
     gastos: list[GastoCategoria]  # categorías de gasto, en su orden
     total_gastos: Decimal
     total_ingresos: Decimal
-    saldo: Decimal  # al final del periodo (o actual si no tiene fin)
+    saldo: Decimal  # del periodo: total_ingresos - total_gastos
+
+
+@dataclass
+class Movimiento:
+    """Un gasto o ingreso para el listado de movimientos."""
+
+    fecha: date
+    tipo: str  # TIPO_GASTO | TIPO_INGRESO
+    importe: Decimal  # tal cual está guardado (un gasto puede ser negativo)
+    notas: str
+    id_categoria: int
+    categoria: str
+    icono: str
+    color: str  # ya resuelto con la paleta, igual que en el formulario
 
 
 def _dec(valor) -> Decimal:
@@ -77,6 +93,9 @@ def _suma(session, *condiciones) -> Decimal:
 
 def _saldo(session, id_usuario: int, id_cuenta: Optional[int], hasta: Optional[date]) -> Decimal:
     """Saldo a fecha `hasta` (incluida) de una cuenta o, con None, de todas.
+
+    Ya no se usa en la pantalla principal (allí el saldo es el del
+    periodo); se deja para cuando haya un listado de cuentas con su saldo.
 
     saldo = saldo_inicial + ingresos - gastos - transf. salientes + entrantes.
     Los gastos negativos (devoluciones) suman solos por el signo. Con
@@ -158,9 +177,76 @@ def resumen(
             if c.activa or por_categoria.get(c.id, CERO) != 0
         ]
 
+        total_gastos = sum(por_categoria.values(), CERO)
+        total_ingresos = _suma(session, *condiciones, Transaccion.tipo == TIPO_INGRESO)
         return Resumen(
             gastos=gastos,
-            total_gastos=sum(por_categoria.values(), CERO),
-            total_ingresos=_suma(session, *condiciones, Transaccion.tipo == TIPO_INGRESO),
-            saldo=_saldo(session, id_usuario, id_cuenta, fin),
+            total_gastos=total_gastos,
+            total_ingresos=total_ingresos,
+            saldo=total_ingresos - total_gastos,
         )
+
+
+def _colores_categorias(session, id_usuario: int) -> dict[int, str]:
+    """{id_categoria: color} con la paleta aplicada igual que en el
+    formulario de alta (posición entre las activas de su tipo). Las
+    archivadas toman la posición que tendrían en la lista completa."""
+    filas = session.exec(
+        sqlmodel.select(Categoria)
+        .where(Categoria.id_usuario == id_usuario)
+        .order_by(Categoria.tipo, Categoria.orden, Categoria.id)
+    ).all()
+    colores: dict[int, str] = {}
+    activas: dict[str, int] = {}
+    todas: dict[str, int] = {}
+    for c in filas:
+        if c.activa:
+            pos = activas.get(c.tipo, 0)
+            activas[c.tipo] = pos + 1
+        else:
+            pos = todas.get(c.tipo, 0)
+        todas[c.tipo] = todas.get(c.tipo, 0) + 1
+        colores[c.id] = color_categoria(c.color, pos)
+    return colores
+
+
+def movimientos(
+    id_usuario: int,
+    inicio: Optional[date],
+    fin: Optional[date],
+    id_cuenta: Optional[int] = None,
+) -> list[Movimiento]:
+    """Gastos e ingresos del periodo [inicio, fin] (None = sin límite) de
+    una cuenta o de todas, del más reciente al más antiguo.
+
+    Las transferencias no salen: no tienen categoría y no cuentan ni como
+    gasto ni como ingreso (no cambian el saldo del periodo)."""
+    condiciones = [
+        Transaccion.id_usuario == id_usuario,
+        Transaccion.tipo.in_((TIPO_GASTO, TIPO_INGRESO)),
+        *_condiciones_fecha(inicio, fin),
+    ]
+    if id_cuenta is not None:
+        condiciones.append(Transaccion.id_cuenta == id_cuenta)
+
+    with rx.session() as session:
+        colores = _colores_categorias(session, id_usuario)
+        filas = session.exec(
+            sqlmodel.select(Transaccion, Categoria)
+            .join(Categoria, Categoria.id == Transaccion.id_categoria)
+            .where(*condiciones)
+            .order_by(Transaccion.fecha.desc(), Transaccion.creado_en.desc(), Transaccion.id.desc())
+        ).all()
+        return [
+            Movimiento(
+                fecha=t.fecha,
+                tipo=t.tipo,
+                importe=_dec(t.importe),
+                notas=t.notas or "",
+                id_categoria=c.id,
+                categoria=c.nombre,
+                icono=c.icono,
+                color=colores.get(c.id, color_categoria(c.color, 0)),
+            )
+            for t, c in filas
+        ]
