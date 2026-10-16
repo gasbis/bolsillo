@@ -14,6 +14,10 @@ Un gasto se abre de dos formas:
 Un ingreso se abre con el botón de ingreso (flecha verde) del pie, sin
 categoría, y funciona igual que el segundo caso.
 
+Editar: tocar un gasto o ingreso en el listado de movimientos lo abre
+aquí (`editar`) con sus datos; el título pasa a "Editar ..." y aparece
+el botón de borrarlo. Al guardar, borrar o cerrar se vuelve al listado.
+
 El diálogo tiene tres vistas (VISTA_*): el formulario, el selector de
 categorías y la creación de una categoría nueva.
 
@@ -31,10 +35,13 @@ from bolsillo.models import TIPO_GASTO, TIPO_INGRESO
 from bolsillo.states.auth_state import AuthState
 from bolsillo.states.resumen_state import ResumenState, euros
 from bolsillo.transacciones_db import (
+    borrar_movimiento,
     categorias,
     crear_categoria,
     crear_movimiento,
     cuentas_por_defecto,
+    editar_movimiento,
+    obtener_movimiento,
 )
 
 VISTA_FORMULARIO = "formulario"
@@ -56,6 +63,12 @@ class AltaGastoState(ResumenState):
     notas: str = ""
     error: str = ""
 
+    # --- Edición ------------------------------------------------------------
+    # Id del movimiento que se edita ("" = alta nueva).
+    id_edicion: str = ""
+    # Primer toque en "Eliminar": pide confirmación con un segundo toque.
+    confirmar_borrado: bool = False
+
     # --- Categorías -------------------------------------------------------
     # [{"id": "3", "nombre": "Comida", "icono": "utensils", "color": "#F97316"}]
     opciones_categorias: list[dict[str, str]] = []
@@ -74,8 +87,14 @@ class AltaGastoState(ResumenState):
     # Si el usuario cambia la cuenta a mano, elegir después una categoría
     # ya no se la cambia.
     _cuenta_elegida_a_mano: bool = False
+    # Abierto desde el listado de movimientos: al terminar se vuelve a él.
+    _desde_lista: bool = False
 
     # --- Vars derivadas para la interfaz ----------------------------------
+
+    @rx.var
+    def es_edicion(self) -> bool:
+        return self.id_edicion != ""
 
     @rx.var
     def es_ingreso(self) -> bool:
@@ -131,7 +150,8 @@ class AltaGastoState(ResumenState):
             return "Elegir categoría"
         if self.vista == VISTA_NUEVA:
             return "Nueva categoría"
-        return "Nuevo ingreso" if self.tipo == TIPO_INGRESO else "Nuevo gasto"
+        que = "ingreso" if self.tipo == TIPO_INGRESO else "gasto"
+        return f"Editar {que}" if self.id_edicion else f"Nuevo {que}"
 
     # --- Internos -----------------------------------------------------------
 
@@ -153,6 +173,19 @@ class AltaGastoState(ResumenState):
             self.id_cuenta_alta = self._cuenta_propuesta(id_categoria)
         self.error = ""
         self.vista = VISTA_FORMULARIO
+
+    def _terminar(self) -> list:
+        """Cierra el diálogo. Si se abrió desde el listado de movimientos,
+        devuelve el evento para volver a él (si no, una lista vacía)."""
+        self.abierto = False
+        self.error = ""
+        self.confirmar_borrado = False
+        if not self._desde_lista:
+            return []
+        self._desde_lista = False
+        from bolsillo.states.movimientos_state import MovimientosState
+
+        return [MovimientosState.reabrir]
 
     # --- Abrir / cerrar ---------------------------------------------------
 
@@ -191,11 +224,50 @@ class AltaGastoState(ResumenState):
         self.expresion = ""
         self.notas = ""
         self.error = ""
+        self.id_edicion = ""
+        self.confirmar_borrado = False
+        self._desde_lista = False
+        self.abierto = True
+
+    @rx.event
+    async def editar(self, id_movimiento: str):
+        """Desde el listado de movimientos: abre el gasto o ingreso con
+        sus datos para modificarlo o borrarlo."""
+        id_usuario = await self._id_usuario()
+        if not id_usuario or not id_movimiento.isdigit():
+            return
+        mov = obtener_movimiento(id_usuario, int(id_movimiento))
+        if mov is None or mov["tipo"] not in (TIPO_GASTO, TIPO_INGRESO):
+            from bolsillo.states.movimientos_state import MovimientosState
+
+            return [rx.toast.error("Ese movimiento ya no existe."), MovimientosState.reabrir]
+        if not self.cuentas:
+            await self._recargar()
+        self.tipo = mov["tipo"]
+        self.vista = VISTA_FORMULARIO
+        self.opciones_categorias = categorias(id_usuario, self.tipo)
+        id_categoria = str(mov["id_categoria"])
+        if all(c["id"] != id_categoria for c in self.opciones_categorias):
+            # Categoría archivada: se ofrece igual para poder dejarla.
+            self.opciones_categorias = self.opciones_categorias + [mov["categoria"]]
+        self._cuenta_elegida_a_mano = True  # cambiar la categoría no toca la cuenta
+        self.id_categoria = id_categoria
+        self.id_cuenta_alta = str(mov["id_cuenta"])
+        self.fecha_alta = mov["fecha"].isoformat()
+        self.expresion = calculadora.formatear(mov["importe"])
+        self.notas = mov["notas"]
+        self.error = ""
+        self.id_edicion = id_movimiento
+        self.confirmar_borrado = False
+        self._desde_lista = True
         self.abierto = True
 
     @rx.event
     def set_abierto(self, valor: bool):
-        self.abierto = valor
+        if valor:
+            self.abierto = True
+            return
+        return self._terminar()
 
     # --- Campos del formulario --------------------------------------------
 
@@ -308,21 +380,56 @@ class AltaGastoState(ResumenState):
         if not id_usuario:
             return
         try:
-            anotado = crear_movimiento(
-                id_usuario,
-                self.tipo,
-                int(self.id_categoria),
-                int(self.id_cuenta_alta),
-                fecha,
-                importe,
-                self.notas,
-            )
+            if self.id_edicion:
+                anotado = editar_movimiento(
+                    id_usuario,
+                    int(self.id_edicion),
+                    int(self.id_categoria),
+                    int(self.id_cuenta_alta),
+                    fecha,
+                    importe,
+                    self.notas,
+                )
+            else:
+                anotado = crear_movimiento(
+                    id_usuario,
+                    self.tipo,
+                    int(self.id_categoria),
+                    int(self.id_cuenta_alta),
+                    fecha,
+                    importe,
+                    self.notas,
+                )
         except ValueError as e:
             self.error = str(e)
             return
 
-        self.abierto = False
-        self.error = ""
-        await self._recargar()
         que = "Ingreso" if es_ingreso else "Gasto"
-        return rx.toast.success(f"{que} anotado: {euros(anotado)}", duration=2500)
+        hecho = "modificado" if self.id_edicion else "anotado"
+        await self._recargar()
+        return [
+            rx.toast.success(f"{que} {hecho}: {euros(anotado)}", duration=2500),
+            *self._terminar(),
+        ]
+
+    @rx.event
+    async def borrar(self):
+        """Botón "Eliminar" de la edición: el primer toque pide
+        confirmación y el segundo borra."""
+        if not self.id_edicion:
+            return
+        if not self.confirmar_borrado:
+            self.confirmar_borrado = True
+            return
+        id_usuario = await self._id_usuario()
+        if not id_usuario:
+            return
+        try:
+            borrar_movimiento(id_usuario, int(self.id_edicion))
+        except ValueError as e:
+            self.error = str(e)
+            self.confirmar_borrado = False
+            return
+        que = "Ingreso" if self.tipo == TIPO_INGRESO else "Gasto"
+        await self._recargar()
+        return [rx.toast.success(f"{que} eliminado", duration=2500), *self._terminar()]

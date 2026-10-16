@@ -42,21 +42,54 @@ class Resumen:
     gastos: list[GastoCategoria]  # categorías de gasto, en su orden
     total_gastos: Decimal
     total_ingresos: Decimal
-    saldo: Decimal  # del periodo: total_ingresos - total_gastos
+    # Del periodo: ingresos - gastos. Con una cuenta elegida también
+    # cuentan sus transferencias (entrantes suman, salientes restan); con
+    # todas se anulan entre sí y no hace falta sumarlas.
+    saldo: Decimal
+
+
+# Cómo se ven las transferencias en el listado de movimientos (no tienen
+# categoría; se agrupan todas juntas).
+CATEGORIA_TRANSFERENCIAS = "Transferencias"
+ICONO_TRANSFERENCIA = "arrow-left-right"
+COLOR_TRANSFERENCIA = "#94a3b8"
 
 
 @dataclass
 class Movimiento:
-    """Un gasto o ingreso para el listado de movimientos."""
+    """Un gasto, ingreso o transferencia para el listado de movimientos."""
 
+    id: int
     fecha: date
-    tipo: str  # TIPO_GASTO | TIPO_INGRESO
+    tipo: str  # TIPO_GASTO | TIPO_INGRESO | TIPO_TRANSFERENCIA
     importe: Decimal  # tal cual está guardado (un gasto puede ser negativo)
     notas: str
-    id_categoria: int
-    categoria: str
+    id_categoria: int  # 0 en las transferencias
+    categoria: str  # CATEGORIA_TRANSFERENCIAS en las transferencias
     icono: str
     color: str  # ya resuelto con la paleta, igual que en el formulario
+    # Solo transferencias: cuentas de origen y destino.
+    id_origen: int = 0
+    id_destino: int = 0
+    origen: str = ""
+    destino: str = ""
+
+    def efecto(self, id_cuenta: Optional[int]) -> Decimal:
+        """Lo que suma o resta al saldo del periodo: + ingreso, - gasto
+        (una devolución suma). Una transferencia resta en la cuenta de
+        origen y suma en la de destino; con todas las cuentas (None) se
+        anula: 0."""
+        if self.tipo == TIPO_INGRESO:
+            return self.importe
+        if self.tipo == TIPO_GASTO:
+            return -self.importe
+        if id_cuenta is None:
+            return CERO
+        if id_cuenta == self.id_origen:
+            return -self.importe
+        if id_cuenta == self.id_destino:
+            return self.importe
+        return CERO
 
 
 def _dec(valor) -> Decimal:
@@ -179,11 +212,20 @@ def resumen(
 
         total_gastos = sum(por_categoria.values(), CERO)
         total_ingresos = _suma(session, *condiciones, Transaccion.tipo == TIPO_INGRESO)
+        saldo = total_ingresos - total_gastos
+        if id_cuenta is not None:
+            transferencias = [
+                Transaccion.id_usuario == id_usuario,
+                Transaccion.tipo == TIPO_TRANSFERENCIA,
+                *_condiciones_fecha(inicio, fin),
+            ]
+            saldo += _suma(session, *transferencias, Transaccion.id_cuenta_destino == id_cuenta)
+            saldo -= _suma(session, *transferencias, Transaccion.id_cuenta == id_cuenta)
         return Resumen(
             gastos=gastos,
             total_gastos=total_gastos,
             total_ingresos=total_ingresos,
-            saldo=total_ingresos - total_gastos,
+            saldo=saldo,
         )
 
 
@@ -216,37 +258,59 @@ def movimientos(
     fin: Optional[date],
     id_cuenta: Optional[int] = None,
 ) -> list[Movimiento]:
-    """Gastos e ingresos del periodo [inicio, fin] (None = sin límite) de
-    una cuenta o de todas, del más reciente al más antiguo.
-
-    Las transferencias no salen: no tienen categoría y no cuentan ni como
-    gasto ni como ingreso (no cambian el saldo del periodo)."""
-    condiciones = [
-        Transaccion.id_usuario == id_usuario,
-        Transaccion.tipo.in_((TIPO_GASTO, TIPO_INGRESO)),
-        *_condiciones_fecha(inicio, fin),
-    ]
+    """Gastos, ingresos y transferencias del periodo [inicio, fin]
+    (None = sin límite) de una cuenta o de todas, del más reciente al
+    más antiguo. Con una cuenta elegida salen las transferencias que
+    salen de ella y las que llegan a ella."""
+    condiciones = [Transaccion.id_usuario == id_usuario, *_condiciones_fecha(inicio, fin)]
     if id_cuenta is not None:
-        condiciones.append(Transaccion.id_cuenta == id_cuenta)
+        condiciones.append(
+            (Transaccion.id_cuenta == id_cuenta)
+            | (
+                (Transaccion.tipo == TIPO_TRANSFERENCIA)
+                & (Transaccion.id_cuenta_destino == id_cuenta)
+            )
+        )
 
     with rx.session() as session:
         colores = _colores_categorias(session, id_usuario)
+        nombres_cuentas = dict(
+            session.exec(
+                sqlmodel.select(Cuenta.id, Cuenta.nombre).where(Cuenta.id_usuario == id_usuario)
+            ).all()
+        )
         filas = session.exec(
             sqlmodel.select(Transaccion, Categoria)
-            .join(Categoria, Categoria.id == Transaccion.id_categoria)
+            .join(Categoria, Categoria.id == Transaccion.id_categoria, isouter=True)
             .where(*condiciones)
             .order_by(Transaccion.fecha.desc(), Transaccion.creado_en.desc(), Transaccion.id.desc())
         ).all()
-        return [
-            Movimiento(
-                fecha=t.fecha,
-                tipo=t.tipo,
-                importe=_dec(t.importe),
-                notas=t.notas or "",
-                id_categoria=c.id,
-                categoria=c.nombre,
-                icono=c.icono,
-                color=colores.get(c.id, color_categoria(c.color, 0)),
-            )
-            for t, c in filas
-        ]
+
+        res = []
+        for t, c in filas:
+            comunes = dict(id=t.id, fecha=t.fecha, tipo=t.tipo, importe=_dec(t.importe), notas=t.notas or "")
+            if t.tipo == TIPO_TRANSFERENCIA:
+                res.append(
+                    Movimiento(
+                        **comunes,
+                        id_categoria=0,
+                        categoria=CATEGORIA_TRANSFERENCIAS,
+                        icono=ICONO_TRANSFERENCIA,
+                        color=COLOR_TRANSFERENCIA,
+                        id_origen=t.id_cuenta,
+                        id_destino=t.id_cuenta_destino or 0,
+                        origen=nombres_cuentas.get(t.id_cuenta, "?"),
+                        destino=nombres_cuentas.get(t.id_cuenta_destino, "?"),
+                    )
+                )
+            elif c is not None:
+                res.append(
+                    Movimiento(
+                        **comunes,
+                        id_categoria=c.id,
+                        categoria=c.nombre,
+                        icono=c.icono,
+                        color=colores.get(c.id, color_categoria(c.color, 0)),
+                    )
+                )
+        return res

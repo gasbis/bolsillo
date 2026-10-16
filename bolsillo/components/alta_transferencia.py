@@ -2,7 +2,7 @@
 
 De arriba abajo:
   fecha (hoy) · importe · cuenta de origen · flecha ↓ · cuenta de destino
-  · teclado numérico · Aceptar.
+  · notas · teclado numérico · Aceptar (y Eliminar al editar).
 
 La flecha entre las cuentas se puede tocar para intercambiarlas.
 """
@@ -11,6 +11,7 @@ import reflex as rx
 
 from bolsillo.components.teclado import (
     SIN_ZOOM,
+    boton_borrar,
     cabecera_dialogo,
     campo_importe,
     fila,
@@ -96,6 +97,14 @@ def _vista_formulario() -> rx.Component:
         ),
         campo_importe(S),
         _cuentas(),
+        rx.input(
+            value=S.notas,
+            on_change=S.set_notas,
+            placeholder="Notas (opcional)",
+            auto_complete=False,
+            size="2",
+            width="100%",
+        ),
         rx.cond(
             S.error != "",
             rx.callout(S.error, color_scheme="red", size="1", width="100%"),
@@ -111,6 +120,7 @@ def _vista_formulario() -> rx.Component:
             width="100%",
             style=SIN_ZOOM,
         ),
+        boton_borrar(S),
         direction="column",
         spacing="2",
     )
@@ -120,7 +130,7 @@ def dialogo_alta_transferencia() -> rx.Component:
     return rx.dialog.root(
         rx.dialog.content(
             rx.flex(
-                cabecera_dialogo("Nueva transferencia"),
+                cabecera_dialogo(S.titulo),
                 _vista_formulario(),
                 direction="column",
             ),

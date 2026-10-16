@@ -5,6 +5,9 @@ Cada grupo (categoría o día) es un <details>: desplegar y plegar lo
 hace el propio navegador, al instante y sin ir al servidor, y se pueden
 tener varios abiertos a la vez. La lista tiene su propio scroll; la
 cabecera (título, periodo y selector de agrupación) se queda fija.
+
+Tocar un movimiento abre su formulario para editarlo o borrarlo (ver
+MovimientosState.editar).
 """
 
 import reflex as rx
@@ -13,6 +16,8 @@ from bolsillo.components.teclado import cabecera_dialogo
 from bolsillo.states.movimientos_state import (
     AGRUPAR_CATEGORIA,
     AGRUPAR_FECHA,
+    GRIS,
+    VERDE,
     MovimientosState,
 )
 
@@ -23,6 +28,10 @@ _CSS = """
 .grupo-mov > summary .chevron-mov { transition: transform 150ms; }
 .grupo-mov[open] > summary .chevron-mov { transform: rotate(90deg); }
 .grupo-mov + .grupo-mov { border-top: 1px solid var(--gray-a4); }
+.linea-mov { cursor: pointer; -webkit-tap-highlight-color: transparent;
+  user-select: none; border-radius: 0.4em; transition: background 120ms; }
+.linea-mov:active { background: var(--gray-a3); }
+@media (hover: hover) { .linea-mov:hover { background: var(--gray-a2); } }
 """
 
 
@@ -41,7 +50,7 @@ def _circulo_icono(icono, color, tam: str = "2.4em", px: int = 18) -> rx.Compone
     )
 
 
-def _textos(titulo, detalle, apagado=False) -> rx.Component:
+def _textos(titulo, detalle) -> rx.Component:
     return rx.flex(
         rx.text(
             titulo,
@@ -51,8 +60,6 @@ def _textos(titulo, detalle, apagado=False) -> rx.Component:
             white_space="nowrap",
             overflow="hidden",
             text_overflow="ellipsis",
-            color=rx.cond(apagado, "var(--gray-9)", "var(--gray-12)"),
-            font_style=rx.cond(apagado, "italic", "normal"),
         ),
         rx.cond(
             detalle != "",
@@ -74,18 +81,22 @@ def _textos(titulo, detalle, apagado=False) -> rx.Component:
 
 def _linea(linea) -> rx.Component:
     """Un movimiento dentro de un grupo desplegado (sin colores en el
-    importe)."""
+    importe). Tocarlo lo abre para editarlo."""
     return rx.flex(
         rx.cond(
             linea.icono != "",
             _circulo_icono(linea.icono, linea.color, tam="1.9em", px=14),
         ),
-        _textos(linea.titulo, linea.detalle, apagado=linea.sin_notas),
+        _textos(linea.titulo, linea.detalle),
         rx.text(linea.importe, size="2", white_space="nowrap", flex_shrink="0"),
+        rx.icon(tag="pencil", size=13, color="var(--gray-8)", flex_shrink="0"),
+        on_click=MovimientosState.editar(linea.id, linea.tipo, linea.clave_grupo),
+        class_name="linea-mov",
+        role="button",
         align="center",
         spacing="3",
         padding_y="0.45em",
-        padding_left="0.5em",
+        padding_x="0.5em",
         border_top="1px solid var(--gray-a3)",
     )
 
@@ -104,7 +115,9 @@ def _grupo(grupo) -> rx.Component:
                     weight="bold",
                     white_space="nowrap",
                     flex_shrink="0",
-                    color_scheme=rx.cond(grupo.positivo, "green", "red"),
+                    # Verde/rojo; gris para las transferencias con todas
+                    # las cuentas (se anulan y no suman ni restan).
+                    color_scheme=rx.match(grupo.tono, (VERDE, "green"), (GRIS, "gray"), "red"),
                 ),
                 align="center",
                 spacing="2",
@@ -117,6 +130,9 @@ def _grupo(grupo) -> rx.Component:
             padding_bottom="0.4em",
         ),
         class_name="grupo-mov",
+        # Al volver de editar un movimiento, su grupo sale desplegado.
+        open=grupo.clave == MovimientosState.desplegado,
+        id="grupo-" + grupo.clave,
         # Al cambiar de agrupación los <details> son otros: no heredan
         # los desplegados de la otra vista.
         key=grupo.clave,

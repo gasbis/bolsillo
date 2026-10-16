@@ -13,6 +13,9 @@ Vista "categorias": rejilla con las categorías (de gasto o de
 ingreso) y "Nueva".
 Vista "nueva": nombre e icono de una categoría nueva.
 
+Al editar un movimiento (desde el listado) el formulario es el mismo,
+con el título "Editar ..." y un botón "Eliminar" al final.
+
 Las tres comparten el mismo diálogo (rx.cond) en vez de abrir diálogos
 encima de otros, que en el móvil se comportan mal.
 """
@@ -21,6 +24,7 @@ import reflex as rx
 
 from bolsillo.components.teclado import (
     SIN_ZOOM as _SIN_ZOOM,
+    boton_borrar,
     cabecera_dialogo,
     campo_importe,
     fila,
@@ -154,6 +158,7 @@ def _vista_formulario() -> rx.Component:
         ),
         teclado(AltaGastoState),
         _boton_final(),
+        boton_borrar(AltaGastoState),
         direction="column",
         spacing="2",
     )

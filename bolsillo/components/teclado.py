@@ -125,3 +125,23 @@ def cabecera_dialogo(titulo) -> rx.Component:
         width="100%",
         padding_bottom="0.5em",
     )
+
+
+def boton_borrar(estado) -> rx.Component:
+    """Botón "Eliminar" de los formularios en modo edición. Necesita en
+    el state `es_edicion`, `confirmar_borrado` y el evento `borrar`: el
+    primer toque pide confirmación y el segundo borra."""
+    return rx.cond(
+        estado.es_edicion,
+        rx.button(
+            rx.icon(tag="trash-2", size=18),
+            rx.cond(estado.confirmar_borrado, "Pulsa otra vez para eliminar", "Eliminar"),
+            on_click=estado.borrar,
+            type="button",
+            size="2",
+            width="100%",
+            color_scheme="red",
+            variant=rx.cond(estado.confirmar_borrado, "solid", "soft"),
+            style=SIN_ZOOM,
+        ),
+    )

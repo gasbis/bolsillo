@@ -406,3 +406,141 @@ def crear_transferencia(
         )
         session.commit()
     return importe
+
+
+# --- Edición y borrado (desde el listado de movimientos) ------------------
+
+
+def obtener_movimiento(id_usuario: int, id_transaccion: int) -> dict | None:
+    """Datos de un movimiento (gasto, ingreso o transferencia) para abrirlo en su formulario de edición,
+    o None si no existe o no es del usuario."""
+    with rx.session() as session:
+        t = session.get(Transaccion, id_transaccion)
+        if t is None or t.id_usuario != id_usuario:
+            return None
+        categoria = session.get(Categoria, t.id_categoria) if t.id_categoria else None
+        return {
+            "id": t.id,
+            "tipo": t.tipo,
+            "fecha": t.fecha,
+            "importe": Decimal(t.importe).quantize(CERO),
+            "id_cuenta": t.id_cuenta,
+            "id_cuenta_destino": t.id_cuenta_destino,
+            "id_categoria": t.id_categoria,
+            "notas": t.notas or "",
+            # Para ofrecerla en el formulario aunque esté archivada.
+            "categoria": {
+                "id": str(categoria.id),
+                "nombre": categoria.nombre,
+                "icono": categoria.icono,
+                "color": color_categoria(categoria.color, 0),
+            }
+            if categoria
+            else {},
+        }
+
+
+def _transaccion_del_usuario(
+    session: sqlmodel.Session, id_usuario: int, id_transaccion: int
+) -> Transaccion:
+    t = session.get(Transaccion, id_transaccion)
+    if t is None or t.id_usuario != id_usuario:
+        raise ValueError("El movimiento ya no existe")
+    return t
+
+
+def _cuenta_editable(
+    session: sqlmodel.Session, id_usuario: int, id_cuenta: int, actual: int | None
+) -> None:
+    """Al editar se puede dejar la cuenta que ya tenía aunque esté
+    archivada; si se cambia, la nueva tiene que estar activa."""
+    if id_cuenta == actual:
+        cuenta = session.get(Cuenta, id_cuenta)
+        if cuenta is None or cuenta.id_usuario != id_usuario:
+            raise ValueError("La cuenta no es válida")
+        return
+    _cuenta_valida(session, id_usuario, id_cuenta)
+
+
+def editar_movimiento(
+    id_usuario: int,
+    id_transaccion: int,
+    id_categoria: int,
+    id_cuenta: int,
+    fecha,
+    importe: Decimal,
+    notas: str = "",
+) -> Decimal:
+    """Modifica un gasto o un ingreso (el tipo no cambia). Mismas reglas
+    que `crear_movimiento`, salvo que se puede dejar la categoría y la
+    cuenta que ya tenía aunque estén archivadas. Devuelve el importe."""
+    importe = Decimal(importe).quantize(CERO)
+    if importe == 0:
+        raise ValueError("El importe no puede ser 0")
+    with rx.session() as session:
+        t = _transaccion_del_usuario(session, id_usuario, id_transaccion)
+        if t.tipo not in _TIPOS_CATEGORIA:
+            raise ValueError("Ese movimiento no es un gasto ni un ingreso")
+        if t.tipo == TIPO_INGRESO and importe < 0:
+            raise ValueError("Un ingreso no puede ser negativo")
+        categoria = session.get(Categoria, id_categoria)
+        if (
+            categoria is None
+            or categoria.id_usuario != id_usuario
+            or categoria.tipo != t.tipo
+            or (not categoria.activa and categoria.id != t.id_categoria)
+        ):
+            raise ValueError("La categoría no es válida")
+        _cuenta_editable(session, id_usuario, id_cuenta, t.id_cuenta)
+        t.id_categoria = id_categoria
+        t.id_cuenta = id_cuenta
+        t.fecha = fecha
+        t.importe = importe
+        t.notas = notas.strip()
+        session.add(t)
+        session.commit()
+    return importe
+
+
+def editar_transferencia(
+    id_usuario: int,
+    id_transaccion: int,
+    id_origen: int,
+    id_destino: int,
+    fecha,
+    importe: Decimal,
+    notas: str = "",
+) -> Decimal:
+    """Modifica una transferencia. Mismas reglas que `crear_transferencia`,
+    salvo que se pueden dejar las cuentas que ya tenía aunque estén
+    archivadas. Devuelve el importe."""
+    importe = Decimal(importe).quantize(CERO)
+    if importe <= 0:
+        raise ValueError("El importe tiene que ser mayor que 0")
+    if id_origen == id_destino:
+        raise ValueError("La cuenta de origen y la de destino tienen que ser distintas")
+    with rx.session() as session:
+        t = _transaccion_del_usuario(session, id_usuario, id_transaccion)
+        if t.tipo != TIPO_TRANSFERENCIA:
+            raise ValueError("Ese movimiento no es una transferencia")
+        actuales = {t.id_cuenta, t.id_cuenta_destino}
+        for id_cuenta in (id_origen, id_destino):
+            _cuenta_editable(
+                session, id_usuario, id_cuenta, id_cuenta if id_cuenta in actuales else None
+            )
+        t.id_cuenta = id_origen
+        t.id_cuenta_destino = id_destino
+        t.fecha = fecha
+        t.importe = importe
+        t.notas = notas.strip()
+        session.add(t)
+        session.commit()
+    return importe
+
+
+def borrar_movimiento(id_usuario: int, id_transaccion: int) -> None:
+    """Borra un gasto, ingreso o transferencia del usuario."""
+    with rx.session() as session:
+        t = _transaccion_del_usuario(session, id_usuario, id_transaccion)
+        session.delete(t)
+        session.commit()

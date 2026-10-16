@@ -1,9 +1,14 @@
 """Formulario de alta de una transferencia entre dos cuentas.
 
 Se abre con el botón de transferencia (flechas ⇄) de la cabecera.
-Solo pide fecha, importe (con el mismo teclado de calculadora que el
-gasto), cuenta de origen y cuenta de destino. Propone las cuentas de la
-última transferencia anotada.
+Pide fecha, importe (con el mismo teclado de calculadora que el
+gasto), cuenta de origen, cuenta de destino y notas. Propone las cuentas
+de la última transferencia anotada.
+
+Editar: tocar una transferencia en el listado de movimientos la abre
+aquí (`editar`) con sus datos; el título pasa a "Editar transferencia"
+y aparece el botón de borrarla. Al guardar, borrar o cerrar se vuelve
+al listado.
 
 Es un substate de ResumenState para poder usar sus cuentas y recargar
 el saldo (`_recargar`) en cuanto se guarda.
@@ -16,9 +21,13 @@ import reflex as rx
 from bolsillo import calculadora, periodos
 from bolsillo.states.auth_state import AuthState
 from bolsillo.states.resumen_state import ResumenState, euros
+from bolsillo.models import TIPO_TRANSFERENCIA
 from bolsillo.transacciones_db import (
+    borrar_movimiento,
     crear_transferencia,
     cuentas_transferencia_por_defecto,
+    editar_transferencia,
+    obtener_movimiento,
 )
 
 
@@ -31,9 +40,24 @@ class AltaTransferenciaState(ResumenState):
     id_destino: str = ""
     # Lo que se ve en el campo del importe, p.ej. "100+50" (ver calculadora.py).
     expresion: str = ""
+    notas: str = ""
     error: str = ""
 
+    # --- Edición ------------------------------------------------------------
+    id_edicion: str = ""  # "" = alta nueva
+    confirmar_borrado: bool = False
+    # Abierto desde el listado de movimientos: al terminar se vuelve a él.
+    _desde_lista: bool = False
+
     # --- Vars derivadas para la interfaz ----------------------------------
+
+    @rx.var
+    def es_edicion(self) -> bool:
+        return self.id_edicion != ""
+
+    @rx.var
+    def titulo(self) -> str:
+        return "Editar transferencia" if self.id_edicion else "Nueva transferencia"
 
     @rx.var
     def pocas_cuentas(self) -> bool:
@@ -72,6 +96,19 @@ class AltaTransferenciaState(ResumenState):
     async def _id_usuario(self) -> int | None:
         return (await self.get_state(AuthState)).current_user["id"] or None
 
+    def _terminar(self) -> list:
+        """Cierra el diálogo. Si se abrió desde el listado de movimientos,
+        devuelve el evento para volver a él (si no, una lista vacía)."""
+        self.abierto = False
+        self.error = ""
+        self.confirmar_borrado = False
+        if not self._desde_lista:
+            return []
+        self._desde_lista = False
+        from bolsillo.states.movimientos_state import MovimientosState
+
+        return [MovimientosState.reabrir]
+
     # --- Abrir / cerrar ---------------------------------------------------
 
     @rx.event
@@ -87,12 +124,44 @@ class AltaTransferenciaState(ResumenState):
         self.id_destino = str(destino) if destino and str(destino) in ids else ""
         self.fecha_alta = date.today().isoformat()
         self.expresion = ""
+        self.notas = ""
         self.error = ""
+        self.id_edicion = ""
+        self.confirmar_borrado = False
+        self._desde_lista = False
+        self.abierto = True
+
+    @rx.event
+    async def editar(self, id_movimiento: str):
+        """Desde el listado de movimientos: abre la transferencia con sus
+        datos para modificarla o borrarla."""
+        id_usuario = await self._id_usuario()
+        if not id_usuario or not id_movimiento.isdigit():
+            return
+        mov = obtener_movimiento(id_usuario, int(id_movimiento))
+        if mov is None or mov["tipo"] != TIPO_TRANSFERENCIA:
+            from bolsillo.states.movimientos_state import MovimientosState
+
+            return [rx.toast.error("Ese movimiento ya no existe."), MovimientosState.reabrir]
+        if not self.cuentas:
+            await self._recargar()
+        self.id_origen = str(mov["id_cuenta"])
+        self.id_destino = str(mov["id_cuenta_destino"] or "")
+        self.fecha_alta = mov["fecha"].isoformat()
+        self.expresion = calculadora.formatear(mov["importe"])
+        self.notas = mov["notas"]
+        self.error = ""
+        self.id_edicion = id_movimiento
+        self.confirmar_borrado = False
+        self._desde_lista = True
         self.abierto = True
 
     @rx.event
     def set_abierto(self, valor: bool):
-        self.abierto = valor
+        if valor:
+            self.abierto = True
+            return
+        return self._terminar()
 
     # --- Campos -------------------------------------------------------------
 
@@ -122,6 +191,10 @@ class AltaTransferenciaState(ResumenState):
         """Escribir en el campo con un teclado físico (ordenador)."""
         self.expresion = calculadora.limpiar(valor)
         self.error = ""
+
+    @rx.event
+    def set_notas(self, valor: str):
+        self.notas = valor[:200]
 
     @rx.event
     def tecla(self, tecla: str):
@@ -155,14 +228,48 @@ class AltaTransferenciaState(ResumenState):
         if not id_usuario:
             return
         try:
-            anotado = crear_transferencia(
-                id_usuario, int(self.id_origen), int(self.id_destino), fecha, importe
-            )
+            if self.id_edicion:
+                anotado = editar_transferencia(
+                    id_usuario,
+                    int(self.id_edicion),
+                    int(self.id_origen),
+                    int(self.id_destino),
+                    fecha,
+                    importe,
+                    self.notas,
+                )
+            else:
+                anotado = crear_transferencia(
+                    id_usuario, int(self.id_origen), int(self.id_destino), fecha, importe, self.notas
+                )
         except ValueError as e:
             self.error = str(e)
             return
 
-        self.abierto = False
-        self.error = ""
+        hecho = "modificada" if self.id_edicion else "anotada"
         await self._recargar()
-        return rx.toast.success(f"Transferencia anotada: {euros(anotado)}", duration=2500)
+        return [
+            rx.toast.success(f"Transferencia {hecho}: {euros(anotado)}", duration=2500),
+            *self._terminar(),
+        ]
+
+    @rx.event
+    async def borrar(self):
+        """Botón "Eliminar" de la edición: el primer toque pide
+        confirmación y el segundo borra."""
+        if not self.id_edicion:
+            return
+        if not self.confirmar_borrado:
+            self.confirmar_borrado = True
+            return
+        id_usuario = await self._id_usuario()
+        if not id_usuario:
+            return
+        try:
+            borrar_movimiento(id_usuario, int(self.id_edicion))
+        except ValueError as e:
+            self.error = str(e)
+            self.confirmar_borrado = False
+            return
+        await self._recargar()
+        return [rx.toast.success("Transferencia eliminada", duration=2500), *self._terminar()]
